@@ -8,6 +8,7 @@ that runs entirely on-device without external dependencies.
 import json
 import logging
 import os
+import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -110,7 +111,6 @@ class LocalFrameStore:
             while total > self.max_disk_bytes * 0.8 and len(sessions) > 1:
                 oldest = sessions.pop(0)
                 if oldest != self._session_dir:
-                    import shutil
                     size = sum(f.stat().st_size for f in oldest.rglob("*"))
                     shutil.rmtree(oldest)
                     total -= size

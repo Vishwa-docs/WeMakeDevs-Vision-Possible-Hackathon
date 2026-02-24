@@ -10,6 +10,7 @@ Day 1: Interface scaffold.
 
 import logging
 import os
+import re
 
 import httpx
 
@@ -67,7 +68,6 @@ async def get_walking_directions(
         for step in leg["steps"]:
             # Strip HTML tags from instructions
             instruction = step.get("html_instructions", "")
-            import re
             clean = re.sub(r"<[^>]+>", " ", instruction).strip()
             steps.append({
                 "instruction": clean,

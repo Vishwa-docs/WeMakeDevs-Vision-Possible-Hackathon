@@ -50,7 +50,7 @@ If the user speaks to you, respond helpfully with context about what you see.
 Always be respectful, patient, and clear. Avoid jargon."""
 
 GUIDELENS_INSTRUCTIONS = """You are GuideLens — a real-time environmental awareness assistant for visually impaired users.
-You analyse the user's live camera feed and describe:
+You analyze the user's live camera feed and describe:
   • Nearby obstacles and hazards (poles, steps, vehicles, people approaching)
   • Text visible in the scene (signs, bus numbers, labels) — read them aloud
   • General scene layout when asked ("What is around me?")
@@ -170,7 +170,13 @@ if __name__ == "__main__":
         serve_options=ServeOptions(
             cors_allow_origins=["http://localhost:5173", "http://localhost:3000"],
             cors_allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-            cors_allow_headers=["*"],
+            cors_allow_headers=[
+                "Content-Type",
+                "Authorization",
+                "Accept",
+                "Origin",
+                "X-Requested-With",
+            ],
             cors_allow_credentials=True,
         ),
     )
