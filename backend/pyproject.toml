@@ -1,0 +1,14 @@
+[project]
+name = "worldlens-backend"
+version = "0.1.0"
+description = "WorldLens — Dual-mode assistive vision agent (SignBridge + GuideLens)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiosqlite>=0.22.1",
+    "httpx>=0.28.1",
+    "opencv-python>=4.13.0.92",
+    "python-dotenv>=1.2.1",
+    "structlog>=23.3.0",
+    "vision-agents[gemini,getstream,huggingface,moondream,nvidia,ultralytics]>=0.3.7",
+]

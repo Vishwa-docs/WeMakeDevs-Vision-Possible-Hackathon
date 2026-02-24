@@ -361,3 +361,19 @@ Planning/
 Documentation/
 .DS_Store
 Thumbs.db
+
+################# WorldLens Project #################
+# Environment files
+.env
+backend/.env
+frontend/.env
+
+# Python venv
+backend/.venv/
+backend/.python-version
+
+# Local data storage
+backend/data/
+
+# Documentation extraction artifacts
+Documentation/EXTRACTED_REFERENCE.md

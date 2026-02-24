@@ -1,0 +1,20 @@
+# WorldLens - Vision Agents Backend Dependencies
+# Install: pip install -r requirements.txt
+
+# Core Vision Agents SDK with all needed plugins
+vision-agents[getstream,gemini,ultralytics,moondream,nvidia,huggingface]
+
+# Environment management
+python-dotenv>=1.0.0
+
+# OpenCV for camera/video handling
+opencv-python>=4.8.0
+
+# Database
+aiosqlite>=0.19.0
+
+# HTTP client (for Maps API, etc.)
+httpx>=0.25.0
+
+# Logging and utilities
+structlog>=23.0.0
