@@ -18,7 +18,9 @@ function App() {
 
   const [callId, setCallId] = useState(`worldlens-${Date.now()}`);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
-  const [alertActive] = useState(false);
+  // TODO (Day 3): Populate transcript from real-time transcription events via WebSocket/SSE
+  // TODO (Day 5): Drive alertActive from hazard detection events emitted by GuideLens processor
+  const alertActive = false; // placeholder — will become useState once hazard events are wired up
   const [startTime] = useState(Date.now());
   const [uptime, setUptime] = useState(0);
 

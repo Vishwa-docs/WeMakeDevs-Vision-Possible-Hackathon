@@ -113,7 +113,8 @@ export function VideoRoom({
             const data = await res.json();
             return data.token;
           }
-        } catch {
+        } catch (err) {
+          console.warn("Token fetch failed, falling back to guest mode:", err);
           // Fall through to guest token
         }
         // Guest mode fallback (works for development)
@@ -149,7 +150,6 @@ export function VideoRoom({
 
     return () => {
       streamCall.leave().catch(console.error);
-      setJoined(false);
     };
   }, [client, callId, callType]);
 
