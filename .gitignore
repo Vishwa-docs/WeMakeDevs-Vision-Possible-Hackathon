@@ -376,4 +376,4 @@ backend/.python-version
 backend/data/
 
 # Documentation extraction artifacts
-Documentation/EXTRACTED_REFERENCE.md
+EXTRACTED_REFERENCE.md
