@@ -136,23 +136,52 @@ export function VideoRoom({
   // Join call when client is ready
   useEffect(() => {
     if (!client || !callId) return;
+    let cancelled = false;
 
     const streamCall = client.call(callType, callId);
     setCall(streamCall);
 
-    streamCall
-      .join({ create: true })
-      .then(() => {
-        setJoined(true);
-        streamCall.camera.enable();
-        streamCall.microphone.enable();
-      })
-      .catch((err) => {
-        console.error("Failed to join call:", err);
-        setError(`Failed to join call: ${err.message}`);
-      });
+    // The backend agent creates the call via POST /sessions.
+    // We join without create — but retry a few times in case the agent
+    // hasn't finished creating/joining the call yet (race condition).
+    const tryJoin = async (attempts = 8, delayMs = 1500) => {
+      for (let i = 0; i < attempts; i++) {
+        if (cancelled) return;
+        try {
+          await streamCall.join({ create: false });
+          if (cancelled) return;
+          setJoined(true);
+          streamCall.camera.enable();
+          streamCall.microphone.enable();
+          return;
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          // "call not found" means the agent hasn't created it yet — retry
+          if (i < attempts - 1 && (msg.includes("not found") || msg.includes("404") || msg.includes("does not exist"))) {
+            console.log(`Call not ready yet, retrying in ${delayMs}ms… (${i + 1}/${attempts})`);
+            await new Promise((r) => setTimeout(r, delayMs));
+            continue;
+          }
+          // Try once with create as final fallback
+          try {
+            await streamCall.join({ create: true });
+            if (cancelled) return;
+            setJoined(true);
+            streamCall.camera.enable();
+            streamCall.microphone.enable();
+            return;
+          } catch (fallbackErr: unknown) {
+            console.error("Failed to join call (with create fallback):", fallbackErr);
+            setError(`Failed to join call: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`);
+          }
+        }
+      }
+    };
+
+    tryJoin();
 
     return () => {
+      cancelled = true;
       streamCall.leave().catch(console.error);
     };
   }, [client, callId, callType]);

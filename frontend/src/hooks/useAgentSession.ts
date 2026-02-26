@@ -64,7 +64,7 @@ export function useAgentSession() {
       try {
         await endSession(sessionRef.current.session_id);
       } catch {
-        // Best-effort cleanup
+        // Best-effort cleanup — 404 is normal if agent already finished
       }
       sessionRef.current = null;
       setSession(null);

@@ -16,14 +16,24 @@ export async function createSession(
     body: JSON.stringify({ call_type: callType, call_id: callId }),
   });
   if (!res.ok) throw new Error(`Failed to create session: ${res.statusText}`);
-  return res.json();
+  const data = await res.json();
+  // SDK response has session_id + call_id + session_started_at; normalise
+  return {
+    session_id: data.session_id,
+    call_type: callType,
+    call_id: data.call_id,
+  };
 }
 
 /** End an agent session */
 export async function endSession(sessionId: string): Promise<void> {
-  await fetch(`${BACKEND_URL}/sessions/${sessionId}`, {
-    method: "DELETE",
-  });
+  try {
+    await fetch(`${BACKEND_URL}/sessions/${sessionId}`, {
+      method: "DELETE",
+    });
+  } catch {
+    // Best-effort — 404 is normal if agent already finished
+  }
 }
 
 /** Get backend mode (signbridge / guidelens) */
