@@ -116,4 +116,28 @@ export async function getFallbackEvents(): Promise<{
   return res.json();
 }
 
+/** Get transcript entries (optionally since a timestamp in ms) */
+export async function getTranscript(
+  since: number = 0
+): Promise<{ entries: { speaker: string; text: string; timestamp: number }[] }> {
+  try {
+    const res = await fetch(
+      `${BACKEND_URL}/transcript${since > 0 ? `?since=${since}` : ""}`
+    );
+    if (!res.ok) return { entries: [] };
+    return res.json();
+  } catch {
+    return { entries: [] };
+  }
+}
+
+/** Clear transcript log on session end */
+export async function clearTranscript(): Promise<void> {
+  try {
+    await fetch(`${BACKEND_URL}/transcript`, { method: "DELETE" });
+  } catch {
+    // best-effort
+  }
+}
+
 export { STREAM_API_KEY, BACKEND_URL };

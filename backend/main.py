@@ -16,7 +16,9 @@ Run:
 import asyncio
 import logging
 import os
+import time
 import uuid
+from collections import deque
 
 from dotenv import load_dotenv
 
@@ -54,6 +56,10 @@ logging.basicConfig(
 logger = logging.getLogger("worldlens")
 
 AGENT_MODE = os.getenv("AGENT_MODE", "guidelens")  # "signbridge" | "guidelens"
+
+# In-memory transcript log — polled by the frontend for the chat sidebar.
+# Using a deque with max length to avoid unbounded growth.
+_transcript_log: deque[dict] = deque(maxlen=500)
 
 # ---------------------------------------------------------------------------
 # System prompts per mode (updated for Day 2 processor awareness)
@@ -200,6 +206,15 @@ class _TranscriptAggregator:
                     )
                 except Exception:
                     pass
+                # Append to the in-memory transcript log for frontend polling
+                speaker = "agent" if role == "assistant" else "user"
+                _transcript_log.append(
+                    {
+                        "speaker": speaker,
+                        "text": combined,
+                        "timestamp": time.time() * 1000,
+                    }
+                )
             # Reset for the next utterance
             self._buffer.clear()
             self._message_id = str(uuid.uuid4())
@@ -397,7 +412,33 @@ if __name__ == "__main__":
         ),
     )
 
+    # ----- Stream client for token generation -----
+    from getstream import Stream as StreamClient
+    from getstream.models import UserRequest
+
+    _stream_client = StreamClient()
+
+    # Upsert the agent user so Stream recognises it for call creation
+    _stream_client.upsert_users(
+        UserRequest(id="worldlens-agent", name="WorldLens", role="admin")
+    )
+    logger.info("Stream agent user upserted: worldlens-agent")
+
     # ----- Custom API endpoints -----
+
+    @runner.fast_api.get("/token")
+    async def get_user_token(user_id: str):
+        """Generate a Stream user token for the frontend client.
+
+        Also upserts the user so Stream's server-side auth recognises them
+        when they join or create calls.
+        """
+        # Upsert user into Stream so they exist before joining a call
+        _stream_client.upsert_users(
+            UserRequest(id=user_id, name=user_id, role="user")
+        )
+        token = _stream_client.create_token(user_id)
+        return {"token": token, "user_id": user_id}
 
     @runner.fast_api.get("/mode")
     def get_mode():
@@ -455,5 +496,20 @@ if __name__ == "__main__":
         """Poll for fallback events (for frontend toast notifications)."""
         events = provider_manager.pop_fallback_events()
         return {"events": events}
+
+    @runner.fast_api.get("/transcript")
+    def get_transcript(since: float = 0):
+        """Get transcript entries, optionally filtering to entries after *since* (ms epoch)."""
+        if since > 0:
+            entries = [e for e in _transcript_log if e["timestamp"] > since]
+        else:
+            entries = list(_transcript_log)
+        return {"entries": entries}
+
+    @runner.fast_api.delete("/transcript")
+    def clear_transcript():
+        """Clear the transcript log (called when a session ends)."""
+        _transcript_log.clear()
+        return {"ok": True}
 
     runner.cli()

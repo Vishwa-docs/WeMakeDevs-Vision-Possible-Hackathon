@@ -7,6 +7,7 @@ import {
   StreamVideoClient,
   StreamCall,
   ParticipantView,
+  ParticipantsAudio,
   useCallStateHooks,
   StreamTheme,
 } from "@stream-io/video-react-sdk";
@@ -63,6 +64,9 @@ function CallUI({ onLeave }: { onLeave?: () => void }) {
           </div>
         ))}
       </div>
+
+      {/* Play remote participants' audio (agent voice) */}
+      <ParticipantsAudio />
 
       {/* Controls */}
       <div className="call-controls">

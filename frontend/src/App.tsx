@@ -2,7 +2,7 @@
  * WorldLens — Main Application
  * Day 2: Core layout with Stream Video, status bar, chat log, mode toggle.
  */
-import { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { useAgentSession } from "./hooks/useAgentSession";
 import { StatusBar } from "./components/StatusBar";
 import { VideoRoom } from "./components/VideoRoom";
@@ -11,6 +11,7 @@ import { TelemetryPanel } from "./components/TelemetryPanel";
 import { AlertOverlay } from "./components/AlertOverlay";
 import { ProviderSelector } from "./components/ProviderSelector";
 import { ToastContainer, useToasts } from "./components/Toast";
+import { getTranscript, clearTranscript } from "./utils/api";
 import type { TranscriptEntry, TelemetryData } from "./types";
 import type { FallbackEvent } from "./utils/api";
 import "./App.css";
@@ -42,8 +43,7 @@ function App() {
 
   const [callId, setCallId] = useState(`worldlens-${Date.now()}`);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
-  // TODO (Day 3): Populate transcript from real-time transcription events via WebSocket/SSE
-  // TODO (Day 5): Drive alertActive from hazard detection events emitted by GuideLens processor
+  const lastTranscriptTs = React.useRef(0);
   const alertActive = false; // placeholder — will become useState once hazard events are wired up
   const [startTime] = useState(Date.now());
   const [uptime, setUptime] = useState(0);
@@ -56,6 +56,26 @@ function App() {
     }, 1000);
     return () => clearInterval(interval);
   }, [session, startTime]);
+
+  // Poll backend for transcript entries while session is active
+  useEffect(() => {
+    if (!session) return;
+    const interval = setInterval(async () => {
+      const data = await getTranscript(lastTranscriptTs.current);
+      if (data.entries.length > 0) {
+        setTranscript((prev) => [
+          ...prev,
+          ...data.entries.map((e) => ({
+            speaker: e.speaker as "user" | "agent",
+            text: e.text,
+            timestamp: e.timestamp,
+          })),
+        ]);
+        lastTranscriptTs.current = data.entries[data.entries.length - 1].timestamp;
+      }
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [session]);
 
   // Handle mode toggle
   const handleToggleMode = useCallback(async () => {
@@ -89,7 +109,9 @@ function App() {
 
   const handleStop = useCallback(async () => {
     await stopSession();
+    await clearTranscript();
     setTranscript([]);
+    lastTranscriptTs.current = 0;
   }, [stopSession]);
 
   return (
