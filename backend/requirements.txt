@@ -7,8 +7,8 @@ vision-agents[getstream,gemini,ultralytics,moondream,nvidia,huggingface]
 # Environment management
 python-dotenv>=1.0.0
 
-# OpenCV for camera/video handling
-opencv-python>=4.8.0
+# OpenCV for camera/video handling (headless avoids libavdevice conflict with av/PyAV)
+opencv-python-headless>=4.8.0
 
 # Database
 aiosqlite>=0.19.0
