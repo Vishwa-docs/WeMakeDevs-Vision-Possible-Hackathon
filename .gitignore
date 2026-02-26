@@ -372,6 +372,10 @@ frontend/.env
 backend/.venv/
 backend/.python-version
 
+# YOLO model weights (auto-downloaded)
+*.pt
+backend/*.pt
+
 # Local data storage
 backend/data/
 

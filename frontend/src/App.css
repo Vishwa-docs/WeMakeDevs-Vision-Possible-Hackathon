@@ -84,6 +84,68 @@
   border: 1px solid #2e2e3e;
 }
 
+/* --- Mode Toggle Button --- */
+.mode-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.75rem;
+  background: #1e1e2e;
+  border: 1px solid #2e2e3e;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #a78bfa;
+  font-size: 0.8rem;
+}
+
+.mode-toggle-btn:hover:not(:disabled) {
+  background: #2e2e3e;
+  border-color: #a78bfa;
+  box-shadow: 0 0 8px #a78bfa33;
+}
+
+.mode-toggle-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mode-toggle-icon {
+  font-size: 1rem;
+}
+
+.mode-toggle-label {
+  font-weight: 600;
+}
+
+.mode-toggle-switch {
+  font-size: 0.9rem;
+  opacity: 0.6;
+}
+
+/* --- Mode Switch Notification --- */
+.mode-notification {
+  padding: 0.5rem 1rem;
+  text-align: center;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: linear-gradient(90deg, #6c63ff22, #3b82f622);
+  color: #a78bfa;
+  border-bottom: 1px solid #2e2e3e;
+  animation: mode-notify-in 0.3s ease;
+}
+
+@keyframes mode-notify-in {
+  from {
+    opacity: 0;
+    transform: translateY(-100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* --- Main Content --- */
 .app-main {
   flex: 1;

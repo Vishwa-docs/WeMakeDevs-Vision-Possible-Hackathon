@@ -2,7 +2,13 @@
  * WorldLens — Custom hook for managing agent sessions
  */
 import { useState, useCallback, useRef, useEffect } from "react";
-import { createSession, endSession, getAgentMode, checkHealth } from "../utils/api";
+import {
+  createSession,
+  endSession,
+  getAgentMode,
+  checkHealth,
+  switchMode as apiSwitchMode,
+} from "../utils/api";
 import type { SessionInfo, AgentMode, AgentStatus } from "../types";
 
 export function useAgentSession() {
@@ -66,6 +72,22 @@ export function useAgentSession() {
     }
   }, []);
 
+  const toggleMode = useCallback(async () => {
+    try {
+      const result = await apiSwitchMode();
+      setStatus((prev) => ({
+        ...prev,
+        mode: (result.mode as AgentMode) || prev.mode,
+      }));
+      return result;
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to switch mode";
+      setError(msg);
+      return null;
+    }
+  }, []);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -82,5 +104,6 @@ export function useAgentSession() {
     error,
     startSession,
     stopSession,
+    toggleMode,
   };
 }

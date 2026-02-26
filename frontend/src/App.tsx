@@ -1,6 +1,6 @@
 /**
  * WorldLens — Main Application
- * Day 1: Core layout with Stream Video integration, status bar, chat log.
+ * Day 2: Core layout with Stream Video, status bar, chat log, mode toggle.
  */
 import { useState, useCallback, useEffect } from "react";
 import { useAgentSession } from "./hooks/useAgentSession";
@@ -13,8 +13,16 @@ import type { TranscriptEntry, TelemetryData } from "./types";
 import "./App.css";
 
 function App() {
-  const { session, status, loading, error, startSession, stopSession } =
-    useAgentSession();
+  const {
+    session,
+    status,
+    loading,
+    error,
+    startSession,
+    stopSession,
+    toggleMode,
+  } = useAgentSession();
+  const [modeMessage, setModeMessage] = useState<string | null>(null);
 
   const [callId, setCallId] = useState(`worldlens-${Date.now()}`);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
@@ -33,11 +41,26 @@ function App() {
     return () => clearInterval(interval);
   }, [session, startTime]);
 
-  // Mock telemetry (Day 5: real metrics from backend)
+  // Handle mode toggle
+  const handleToggleMode = useCallback(async () => {
+    const result = await toggleMode();
+    if (result) {
+      const msg = session
+        ? `Switched to ${result.mode}. Takes effect next session.`
+        : `Switched to ${result.mode}.`;
+      setModeMessage(msg);
+      setTimeout(() => setModeMessage(null), 3000);
+    }
+  }, [toggleMode, session]);
+
+  // Telemetry (Day 5: real metrics from backend)
   const telemetry: TelemetryData = {
     edgeLatency: 24,
-    activeVLM: status.mode === "signbridge" ? "YOLO-Pose" : "Gemini-2.5-Flash",
-    fps: 5,
+    activeVLM:
+      status.mode === "signbridge"
+        ? "YOLO-Pose + Gemini"
+        : "YOLO-Detect + Gemini",
+    fps: status.mode === "signbridge" ? 10 : 5,
     processorCount: status.connected ? 1 : 0,
     uptime,
   };
@@ -68,8 +91,17 @@ function App() {
               : "Environmental Awareness"}
           </span>
         </div>
-        <StatusBar status={status} />
+        <StatusBar
+          status={status}
+          onToggleMode={handleToggleMode}
+          sessionActive={!!session}
+        />
       </header>
+
+      {/* Mode switch notification */}
+      {modeMessage && (
+        <div className="mode-notification">{modeMessage}</div>
+      )}
 
       {/* Main content */}
       <main className="app-main">

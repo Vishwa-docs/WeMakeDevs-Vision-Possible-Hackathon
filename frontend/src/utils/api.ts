@@ -33,6 +33,24 @@ export async function getAgentMode(): Promise<{ mode: string }> {
   return res.json();
 }
 
+/** Toggle agent mode (signbridge ↔ guidelens) */
+export async function switchMode(): Promise<{ mode: string; message: string }> {
+  const res = await fetch(`${BACKEND_URL}/switch-mode`, { method: "POST" });
+  if (!res.ok) throw new Error(`Failed to switch mode: ${res.statusText}`);
+  return res.json();
+}
+
+/** Set a specific agent mode */
+export async function setMode(
+  mode: "signbridge" | "guidelens"
+): Promise<{ mode: string }> {
+  const res = await fetch(`${BACKEND_URL}/set-mode/${mode}`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error(`Failed to set mode: ${res.statusText}`);
+  return res.json();
+}
+
 /** Check backend health */
 export async function checkHealth(): Promise<boolean> {
   try {
