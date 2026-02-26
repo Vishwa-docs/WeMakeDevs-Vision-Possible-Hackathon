@@ -5,11 +5,23 @@
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
 const STREAM_API_KEY = import.meta.env.VITE_STREAM_API_KEY || "";
 
+export async function getStreamConfig(): Promise<{ api_key: string }> {
+  console.log("[WorldLens][api] GET /stream-config");
+  const res = await fetch(`${BACKEND_URL}/stream-config`);
+  if (!res.ok) throw new Error(`Failed to load stream config: ${res.statusText}`);
+  const data = await res.json();
+  console.log("[WorldLens][api] GET /stream-config success", {
+    hasApiKey: Boolean(data?.api_key),
+  });
+  return data;
+}
+
 /** Create a new agent session via the backend API */
 export async function createSession(
   callType: string = "default",
   callId: string = `worldlens-${Date.now()}`
 ): Promise<{ session_id: string; call_type: string; call_id: string }> {
+  console.log("[WorldLens][api] POST /sessions", { callType, callId });
   const res = await fetch(`${BACKEND_URL}/sessions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -17,6 +29,7 @@ export async function createSession(
   });
   if (!res.ok) throw new Error(`Failed to create session: ${res.statusText}`);
   const data = await res.json();
+  console.log("[WorldLens][api] POST /sessions success", data);
   // SDK response has session_id + call_id + session_started_at; normalise
   return {
     session_id: data.session_id,

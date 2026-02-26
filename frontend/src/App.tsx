@@ -48,6 +48,30 @@ function App() {
   const [startTime] = useState(Date.now());
   const [uptime, setUptime] = useState(0);
 
+  useEffect(() => {
+    const onWindowError = (event: ErrorEvent) => {
+      console.error("[WorldLens][window.error]", {
+        message: event.message,
+        filename: event.filename,
+        lineno: event.lineno,
+        colno: event.colno,
+        error: event.error,
+      });
+    };
+
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      console.error("[WorldLens][unhandledrejection]", event.reason);
+    };
+
+    window.addEventListener("error", onWindowError);
+    window.addEventListener("unhandledrejection", onUnhandledRejection);
+
+    return () => {
+      window.removeEventListener("error", onWindowError);
+      window.removeEventListener("unhandledrejection", onUnhandledRejection);
+    };
+  }, []);
+
   // Update uptime counter
   useEffect(() => {
     if (!session) return;
@@ -103,16 +127,32 @@ function App() {
 
   const handleStart = useCallback(async () => {
     const id = `worldlens-${Date.now()}`;
+    console.log("[WorldLens][App] Start Session clicked", { requestedCallId: id });
     setCallId(id);
-    await startSession(id);
+    const started = await startSession(id);
+    console.log("[WorldLens][App] startSession returned", started);
+    if (started?.call_id) {
+      setCallId(started.call_id);
+      console.log("[WorldLens][App] callId set from backend session", {
+        callId: started.call_id,
+        sessionId: started.session_id,
+      });
+    } else {
+      console.warn("[WorldLens][App] startSession returned null/invalid payload");
+    }
   }, [startSession]);
 
   const handleStop = useCallback(async () => {
+    console.log("[WorldLens][App] Stop Session requested", {
+      sessionId: session?.session_id,
+      callId: session?.call_id,
+    });
     await stopSession();
     await clearTranscript();
     setTranscript([]);
     lastTranscriptTs.current = 0;
-  }, [stopSession]);
+    console.log("[WorldLens][App] Session stopped and transcript cleared");
+  }, [session?.call_id, session?.session_id, stopSession]);
 
   return (
     <div className="app">
@@ -198,7 +238,7 @@ function App() {
             {/* Video area */}
             <div className="video-area">
               <VideoRoom
-                callId={callId}
+                callId={session.call_id || callId}
                 onLeave={handleStop}
               />
             </div>

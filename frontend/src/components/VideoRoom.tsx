@@ -11,10 +11,11 @@ import {
   StreamVideoClient,
   StreamCall,
   ParticipantView,
-  ParticipantsAudio,
   useCallStateHooks,
   StreamTheme,
+  CallingState,
 } from "@stream-io/video-react-sdk";
+import type { StreamVideoParticipant } from "@stream-io/video-react-sdk";
 import "@stream-io/video-react-sdk/dist/css/styles.css";
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { STREAM_API_KEY, getStreamConfig } from "../utils/api";
@@ -74,12 +75,69 @@ class VideoErrorBoundary extends React.Component<EBProps, EBState> {
 }
 
 // ---------------------------------------------------------------------------
+// RemoteAudio — plays audio for a single remote participant via <audio> tag.
+// This replaces ParticipantsAudio which crashes when participants is undefined.
+// ---------------------------------------------------------------------------
+function RemoteAudio({ participant }: { participant: StreamVideoParticipant }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioStream = participant.audioStream;
+
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el || !audioStream) return;
+    el.srcObject = audioStream;
+    el.play().catch(() => {});
+    return () => {
+      el.srcObject = null;
+    };
+  }, [audioStream]);
+
+  if (!audioStream) return null;
+  return <audio ref={audioRef} autoPlay playsInline />;
+}
+
+// ---------------------------------------------------------------------------
 // Inner component (must be inside StreamCall provider)
+// All hooks called unconditionally at top level (React rules of hooks).
+// Rendering is gated on CallingState.JOINED so SDK state is populated.
 // ---------------------------------------------------------------------------
 function CallUI({ onLeave }: { onLeave?: () => void }) {
-  const { useParticipants, useLocalParticipant } = useCallStateHooks();
+  const {
+    useParticipants,
+    useLocalParticipant,
+    useCallCallingState,
+  } = useCallStateHooks();
+
+  const callingState = useCallCallingState();
   const participants = useParticipants();
   const localParticipant = useLocalParticipant();
+
+  // Gate: only render participant-dependent UI once the call is fully joined
+  // and the SDK has initialized the participants array.
+  if (
+    callingState !== CallingState.JOINED ||
+    !participants ||
+    !Array.isArray(participants)
+  ) {
+    return (
+      <div className="call-ui">
+        <div className="video-grid">
+          <div
+            className="video-tile remote"
+            style={{ display: "grid", placeItems: "center", color: "#999" }}
+          >
+            <span>
+              {callingState === CallingState.JOINING
+                ? "Joining call…"
+                : callingState === CallingState.RECONNECTING
+                  ? "Reconnecting…"
+                  : "Initialising call…"}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Separate remote participants (agent) from local
   const remoteParticipants = participants.filter(
@@ -122,8 +180,12 @@ function CallUI({ onLeave }: { onLeave?: () => void }) {
         ))}
       </div>
 
-      {/* Play remote participants' audio (agent voice) */}
-      <ParticipantsAudio />
+      {/* Play remote participants' audio (agent voice) —
+           manual <audio> elements instead of ParticipantsAudio to avoid
+           the SDK's internal participants.map crash */}
+      {remoteParticipants.map((p) => (
+        <RemoteAudio key={`audio-${p.sessionId}`} participant={p} />
+      ))}
 
       {/* Controls */}
       <div className="call-controls">

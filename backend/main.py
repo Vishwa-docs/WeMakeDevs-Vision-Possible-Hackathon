@@ -364,6 +364,11 @@ async def join_call(
     agent: Agent, call_type: str, call_id: str, **kwargs
 ) -> None:
     """Handle an agent joining a Stream call."""
+    logger.info("[DEBUG] join_call begin call_type=%s call_id=%s", call_type, call_id)
+    # Ensure the agent user is created on the edge *before* create_call,
+    # because edge.create_call uses edge.agent_user_id which is set by
+    # edge.create_user().  (create_user is idempotent — safe to call twice.)
+    await agent.create_user()
     call = await agent.create_call(call_type, call_id)
     logger.info("Joining call %s/%s …", call_type, call_id)
 
@@ -383,6 +388,7 @@ async def join_call(
             )
 
         await agent.finish()
+    logger.info("[DEBUG] join_call end call_type=%s call_id=%s", call_type, call_id)
 
 
 # ---------------------------------------------------------------------------
@@ -433,12 +439,26 @@ if __name__ == "__main__":
         Also upserts the user so Stream's server-side auth recognises them
         when they join or create calls.
         """
+        logger.info("[DEBUG] /token requested user_id=%s", user_id)
         # Upsert user into Stream so they exist before joining a call
         _stream_client.upsert_users(
             UserRequest(id=user_id, name=user_id, role="user")
         )
         token = _stream_client.create_token(user_id)
+        logger.info("[DEBUG] /token issued user_id=%s token_len=%d", user_id, len(token or ""))
         return {"token": token, "user_id": user_id}
+
+    @runner.fast_api.get("/stream-config")
+    def get_stream_config():
+        """Expose Stream config needed by the frontend client.
+
+        Keeps backend as the single source of truth so frontend env drift
+        (wrong or missing VITE_STREAM_API_KEY) does not break joins.
+        """
+        logger.info("[DEBUG] /stream-config requested")
+        return {
+            "api_key": os.getenv("STREAM_API_KEY", ""),
+        }
 
     @runner.fast_api.get("/mode")
     def get_mode():
