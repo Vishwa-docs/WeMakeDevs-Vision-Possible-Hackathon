@@ -61,4 +61,59 @@ export async function checkHealth(): Promise<boolean> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Provider management
+// ---------------------------------------------------------------------------
+
+export interface ProviderInfo {
+  provider: string;
+  available: boolean;
+  in_cooldown: boolean;
+  last_error: string | null;
+  total_calls: number;
+  total_errors: number;
+}
+
+export interface ProvidersStatus {
+  preferred: string;
+  providers: Record<string, ProviderInfo>;
+  fallback_chain: string[];
+  health: Record<string, boolean>;
+}
+
+export interface FallbackEvent {
+  original: string;
+  fallback: string;
+  reason: string;
+  timestamp: number;
+}
+
+/** Get status of all VLM providers */
+export async function getProviders(): Promise<ProvidersStatus> {
+  const res = await fetch(`${BACKEND_URL}/providers`);
+  if (!res.ok) throw new Error("Failed to fetch providers");
+  return res.json();
+}
+
+/** Set the preferred VLM provider */
+export async function setPreferredProvider(
+  providerId: string
+): Promise<ProvidersStatus> {
+  const res = await fetch(
+    `${BACKEND_URL}/providers/preferred/${providerId}`,
+    { method: "POST" }
+  );
+  if (!res.ok) throw new Error("Failed to set preferred provider");
+  return res.json();
+}
+
+/** Poll for fallback events (for toast notifications) */
+export async function getFallbackEvents(): Promise<{
+  events: FallbackEvent[];
+}> {
+  const res = await fetch(`${BACKEND_URL}/providers/fallback-events`);
+  if (!res.ok) return { events: [] };
+  return res.json();
+}
+
 export { STREAM_API_KEY, BACKEND_URL };

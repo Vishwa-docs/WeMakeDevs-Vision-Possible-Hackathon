@@ -13,8 +13,10 @@ Run:
     uv run main.py serve --host 0.0.0.0 --port 8000
 """
 
+import asyncio
 import logging
 import os
+import uuid
 
 from dotenv import load_dotenv
 
@@ -39,6 +41,7 @@ from processors import (
     HazardDetectedEvent,
     SceneSummaryEvent,
 )
+from providers import provider_manager, ProviderID
 
 # ---------------------------------------------------------------------------
 # Config
@@ -129,6 +132,80 @@ def _build_processors() -> list:
 
 
 # ---------------------------------------------------------------------------
+# Transcript buffer — aggregates word-level transcript chunks into sentences
+# ---------------------------------------------------------------------------
+class _TranscriptAggregator:
+    """Buffers rapid-fire transcript events into complete messages.
+
+    The SDK's Gemini Realtime plugin emits a separate
+    ``RealtimeAgentSpeechTranscriptionEvent`` for every word / short phrase.
+    The SDK's built-in handler calls ``conversation.upsert_message`` with a
+    **new UUID each time**, so each word becomes a separate Stream Chat
+    message.
+
+    This aggregator collects chunks and flushes them as a single chat
+    message after a configurable silence window (default 1.5 s).
+    """
+
+    def __init__(self, flush_delay: float = 1.5):
+        self._buffer: list[str] = []
+        self._flush_delay = flush_delay
+        self._flush_task: asyncio.Task | None = None
+        self._message_id: str = str(uuid.uuid4())
+        self._lock = asyncio.Lock()
+
+    async def add(self, text: str, conversation, user_id: str, role: str):
+        """Append a transcript chunk and (re)schedule the flush timer."""
+        async with self._lock:
+            self._buffer.append(text)
+
+            # Cancel the previous flush timer — speaker is still talking
+            if self._flush_task and not self._flush_task.done():
+                self._flush_task.cancel()
+
+            # Flush as a single upsert (streaming update, not completed yet)
+            combined = "".join(self._buffer).strip()
+            if conversation and combined:
+                try:
+                    await conversation.upsert_message(
+                        message_id=self._message_id,
+                        role=role,
+                        user_id=user_id,
+                        content=combined,
+                        completed=False,
+                        replace=True,
+                    )
+                except Exception:
+                    pass  # non-critical
+
+            # Schedule final flush
+            self._flush_task = asyncio.create_task(
+                self._flush(conversation, user_id, role)
+            )
+
+    async def _flush(self, conversation, user_id: str, role: str):
+        """Wait for silence, then finalise the message and reset."""
+        await asyncio.sleep(self._flush_delay)
+        async with self._lock:
+            combined = "".join(self._buffer).strip()
+            if conversation and combined:
+                try:
+                    await conversation.upsert_message(
+                        message_id=self._message_id,
+                        role=role,
+                        user_id=user_id,
+                        content=combined,
+                        completed=True,
+                        replace=True,
+                    )
+                except Exception:
+                    pass
+            # Reset for the next utterance
+            self._buffer.clear()
+            self._message_id = str(uuid.uuid4())
+
+
+# ---------------------------------------------------------------------------
 # Agent factory
 # ---------------------------------------------------------------------------
 async def create_agent(**kwargs) -> Agent:
@@ -145,14 +222,37 @@ async def create_agent(**kwargs) -> Agent:
         processors=processors,
     )
 
-    # --- Event Logging (development) ----------------------------------------
+    # --- Fix word-by-word chat: remove SDK built-in transcript→chat --------
+    # The SDK subscribes its own handlers that call conversation.upsert_message
+    # with a new UUID per transcript chunk, causing one chat message per word.
+    # We remove those and replace them with buffered versions.
+    _agent_type = "plugin.realtime_agent_speech_transcription"
+    _user_type = "plugin.realtime_user_speech_transcription"
+    for event_type in (_agent_type, _user_type):
+        if event_type in agent.events._handlers:
+            agent.events._handlers[event_type].clear()
+
+    _agent_buf = _TranscriptAggregator(flush_delay=1.5)
+    _user_buf = _TranscriptAggregator(flush_delay=1.0)
+
+    # --- Replacement handlers with buffering -------------------------------
     @agent.events.subscribe
     async def on_user_speech(event: RealtimeUserSpeechTranscriptionEvent):
         logger.info("🎤 User: %s", event.text)
+        if agent.conversation and event.text:
+            uid = event.user_id() if hasattr(event, 'user_id') and callable(event.user_id) else "user"
+            await _user_buf.add(
+                event.text, agent.conversation, uid or "user", "user"
+            )
 
     @agent.events.subscribe
     async def on_agent_speech(event: RealtimeAgentSpeechTranscriptionEvent):
         logger.info("🤖 Agent: %s", event.text)
+        if agent.conversation and event.text:
+            await _agent_buf.add(
+                event.text, agent.conversation,
+                agent.agent_user.id or "worldlens-agent", "assistant"
+            )
 
     @agent.events.subscribe
     async def on_participant_joined(event: CallSessionParticipantJoinedEvent):
@@ -327,5 +427,33 @@ if __name__ == "__main__":
         AGENT_MODE = mode
         logger.info("Mode set to [%s]", AGENT_MODE.upper())
         return {"mode": AGENT_MODE}
+
+    # ----- Provider management endpoints -----
+
+    @runner.fast_api.get("/providers")
+    async def get_providers():
+        """Get status of all VLM providers and the current fallback chain."""
+        health = await provider_manager.check_all_providers()
+        status = provider_manager.get_status()
+        status["health"] = health
+        return status
+
+    @runner.fast_api.post("/providers/preferred/{provider_id}")
+    def set_preferred_provider(provider_id: str):
+        """Set the user's preferred VLM provider."""
+        ok = provider_manager.set_preferred(provider_id)
+        if not ok:
+            valid = [p.value for p in ProviderID]
+            return {
+                "error": f"Unknown provider: {provider_id}",
+                "valid_providers": valid,
+            }
+        return provider_manager.get_status()
+
+    @runner.fast_api.get("/providers/fallback-events")
+    def get_fallback_events():
+        """Poll for fallback events (for frontend toast notifications)."""
+        events = provider_manager.pop_fallback_events()
+        return {"events": events}
 
     runner.cli()

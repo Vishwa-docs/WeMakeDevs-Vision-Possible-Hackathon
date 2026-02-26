@@ -267,7 +267,7 @@ class GuideLensProcessor(VideoProcessorPublisher):
                 if detections and self._events:
                     # --- Object detected event ---
                     object_names = [d["class"] for d in detections]
-                    await self._events.send(
+                    self._events.send(
                         ObjectDetectedEvent(
                             objects=object_names,
                             frame_number=self._frame_count,
@@ -431,7 +431,7 @@ class GuideLensProcessor(VideoProcessorPublisher):
             )
 
             if should_alert and self._events:
-                await self._events.send(
+                self._events.send(
                     HazardDetectedEvent(
                         hazard_type=cls,
                         distance_estimate=distance,
@@ -459,7 +459,7 @@ class GuideLensProcessor(VideoProcessorPublisher):
         )
 
         if self._events:
-            await self._events.send(
+            self._events.send(
                 SceneSummaryEvent(
                     summary=summary,
                     object_counts=dict(counts),

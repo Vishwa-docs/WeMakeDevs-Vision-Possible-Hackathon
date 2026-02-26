@@ -373,7 +373,7 @@ class SignBridgeProcessor(VideoProcessorPublisher):
 
                 # Emit detection event
                 if all_keypoints and self._events:
-                    await self._events.send(
+                    self._events.send(
                         SignDetectedEvent(
                             keypoints=all_keypoints,
                             num_persons=len(all_keypoints),
@@ -389,7 +389,7 @@ class SignBridgeProcessor(VideoProcessorPublisher):
                 )
                 if gesture_seq and self._events:
                     raw_gloss = self._classify_gesture(gesture_seq)
-                    await self._events.send(
+                    self._events.send(
                         GestureBufferEvent(
                             gesture_sequence=[],  # omit heavy data
                             buffer_length=len(gesture_seq),
@@ -400,7 +400,7 @@ class SignBridgeProcessor(VideoProcessorPublisher):
                     if raw_gloss:
                         translated = await self._translator.translate(raw_gloss)
                         if translated:
-                            await self._events.send(
+                            self._events.send(
                                 SignTranslationEvent(
                                     raw_gloss=raw_gloss,
                                     translated_text=translated,

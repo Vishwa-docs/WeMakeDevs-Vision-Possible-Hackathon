@@ -9,7 +9,10 @@ import { VideoRoom } from "./components/VideoRoom";
 import { ChatLog } from "./components/ChatLog";
 import { TelemetryPanel } from "./components/TelemetryPanel";
 import { AlertOverlay } from "./components/AlertOverlay";
+import { ProviderSelector } from "./components/ProviderSelector";
+import { ToastContainer, useToasts } from "./components/Toast";
 import type { TranscriptEntry, TelemetryData } from "./types";
+import type { FallbackEvent } from "./utils/api";
 import "./App.css";
 
 function App() {
@@ -23,6 +26,19 @@ function App() {
     toggleMode,
   } = useAgentSession();
   const [modeMessage, setModeMessage] = useState<string | null>(null);
+  const { toasts, addToast, dismissToast } = useToasts();
+
+  // Handle provider fallback events → show toast
+  const handleFallbackToast = useCallback(
+    (event: FallbackEvent) => {
+      addToast(
+        `Provider ${event.original} failed (${event.reason}). Switched to ${event.fallback}.`,
+        "warning",
+        6000
+      );
+    },
+    [addToast]
+  );
 
   const [callId, setCallId] = useState(`worldlens-${Date.now()}`);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
@@ -80,6 +96,7 @@ function App() {
     <div className="app">
       {/* Alert overlay for hazard warnings */}
       <AlertOverlay active={alertActive} message="Obstacle approaching!" />
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
       {/* Header */}
       <header className="app-header">
@@ -96,6 +113,7 @@ function App() {
           onToggleMode={handleToggleMode}
           sessionActive={!!session}
         />
+        <ProviderSelector onFallbackToast={handleFallbackToast} />
       </header>
 
       {/* Mode switch notification */}
