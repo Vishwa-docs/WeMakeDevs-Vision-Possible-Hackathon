@@ -1,6 +1,10 @@
 /**
  * WorldLens — Video Room component
  * Connects to a Stream Video call and renders local + remote video.
+ *
+ * Simplified: single useEffect handles the entire lifecycle (token → client →
+ * join → media) so there are no competing cleanup functions that can
+ * accidentally disconnect the user mid-session.
  */
 import {
   StreamVideo,
@@ -12,8 +16,8 @@ import {
   StreamTheme,
 } from "@stream-io/video-react-sdk";
 import "@stream-io/video-react-sdk/dist/css/styles.css";
-import { useEffect, useMemo, useState, useCallback } from "react";
-import { STREAM_API_KEY } from "../utils/api";
+import React, { useEffect, useState, useCallback, useRef } from "react";
+import { STREAM_API_KEY, getStreamConfig } from "../utils/api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -24,6 +28,49 @@ interface VideoRoomProps {
   userId?: string;
   userName?: string;
   onLeave?: () => void;
+}
+
+// ---------------------------------------------------------------------------
+// ErrorBoundary — prevents Stream SDK crashes from white-screening the app
+// ---------------------------------------------------------------------------
+interface EBProps {
+  children: React.ReactNode;
+  onReset?: () => void;
+}
+interface EBState {
+  error: Error | null;
+}
+
+class VideoErrorBoundary extends React.Component<EBProps, EBState> {
+  constructor(props: EBProps) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error("[WorldLens][VideoErrorBoundary]", error, info.componentStack);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="video-room error">
+          <p>⚠️ Video stream crashed: {this.state.error.message}</p>
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              this.setState({ error: null });
+              this.props.onReset?.();
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -38,11 +85,21 @@ function CallUI({ onLeave }: { onLeave?: () => void }) {
   const remoteParticipants = participants.filter(
     (p) => p.sessionId !== localParticipant?.sessionId
   );
+  const hasAnyVideoParticipant =
+    Boolean(localParticipant) || remoteParticipants.length > 0;
 
   return (
     <div className="call-ui">
       {/* Main video area */}
       <div className="video-grid">
+        {!hasAnyVideoParticipant && (
+          <div
+            className="video-tile remote"
+            style={{ display: "grid", placeItems: "center", color: "#999" }}
+          >
+            <span>Joining call… waiting for camera/participants.</span>
+          </div>
+        )}
         {/* Local camera (user) */}
         {localParticipant && (
           <div className="video-tile local">
@@ -91,109 +148,148 @@ export function VideoRoom({
   userName = "Web User",
   onLeave,
 }: VideoRoomProps) {
+  console.log("[WorldLens][VideoRoom] render", { callId, callType, userId });
+
   const [client, setClient] = useState<StreamVideoClient | null>(null);
-  const [call, setCall] = useState<ReturnType<StreamVideoClient["call"]> | null>(null);
+  const [call, setCall] = useState<ReturnType<
+    StreamVideoClient["call"]
+  > | null>(null);
   const [joined, setJoined] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Initialize Stream Video client
+  // Keep refs so the unmount cleanup always sees the latest objects
+  const clientRef = useRef<StreamVideoClient | null>(null);
+  const callRef = useRef<ReturnType<StreamVideoClient["call"]> | null>(null);
+
+  // ------------------------------------------------------------------
+  // Single consolidated effect: token → client → join → enable media
+  // Only ONE cleanup function = no accidental disconnects.
+  // ------------------------------------------------------------------
   useEffect(() => {
-    if (!STREAM_API_KEY) {
-      setError("VITE_STREAM_API_KEY not configured");
-      return;
-    }
-
-    const videoClient = new StreamVideoClient({
-      apiKey: STREAM_API_KEY,
-      user: { id: userId, name: userName },
-      tokenProvider: async () => {
-        // For development: use the backend to generate a user token
-        // In production, this should come from your auth server
-        try {
-          const res = await fetch(
-            `${import.meta.env.VITE_BACKEND_URL || "http://localhost:8000"}/token?user_id=${userId}`
-          );
-          if (res.ok) {
-            const data = await res.json();
-            return data.token;
-          }
-        } catch (err) {
-          console.warn("Token fetch failed, falling back to guest mode:", err);
-          // Fall through to guest token
-        }
-        // Guest mode fallback (works for development)
-        return "";
-      },
-    });
-
-    setClient(videoClient);
-
-    return () => {
-      videoClient.disconnectUser();
-    };
-  }, [userId, userName]);
-
-  // Join call when client is ready
-  useEffect(() => {
-    if (!client || !callId) return;
     let cancelled = false;
 
-    const streamCall = client.call(callType, callId);
-    setCall(streamCall);
-
-    // The backend agent creates the call via POST /sessions.
-    // We join without create — but retry a few times in case the agent
-    // hasn't finished creating/joining the call yet (race condition).
-    const tryJoin = async (attempts = 8, delayMs = 1500) => {
-      for (let i = 0; i < attempts; i++) {
+    async function init() {
+      try {
+        // 1. Resolve API key (env first, then backend fallback)
+        let key = STREAM_API_KEY;
+        if (!key) {
+          console.log("[WorldLens][VideoRoom] apiKey missing, fetching from backend");
+          const cfg = await getStreamConfig();
+          key = cfg.api_key || "";
+        }
+        if (!key) {
+          throw new Error("No Stream API key configured (VITE_STREAM_API_KEY)");
+        }
         if (cancelled) return;
-        try {
-          await streamCall.join({ create: false });
-          if (cancelled) return;
-          setJoined(true);
-          streamCall.camera.enable();
-          streamCall.microphone.enable();
+
+        // 2. Fetch user token from backend
+        const backendUrl =
+          import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
+        console.log("[WorldLens][VideoRoom] fetching token", { userId, callId });
+        const res = await fetch(`${backendUrl}/token?user_id=${userId}`);
+        if (!res.ok)
+          throw new Error(`Token endpoint failed: ${res.status} ${res.statusText}`);
+        const data = await res.json();
+        if (!data?.token) throw new Error("Token endpoint returned empty token");
+        if (cancelled) return;
+
+        // 3. Create Stream Video client
+        const newClient = new StreamVideoClient({
+          apiKey: key,
+          user: { id: userId, name: userName },
+          token: data.token,
+        });
+        clientRef.current = newClient;
+        console.log("[WorldLens][VideoRoom] StreamVideoClient created");
+        if (cancelled) {
+          newClient.disconnectUser();
           return;
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
-          // "call not found" means the agent hasn't created it yet — retry
-          if (i < attempts - 1 && (msg.includes("not found") || msg.includes("404") || msg.includes("does not exist"))) {
-            console.log(`Call not ready yet, retrying in ${delayMs}ms… (${i + 1}/${attempts})`);
-            await new Promise((r) => setTimeout(r, delayMs));
-            continue;
-          }
-          // Try once with create as final fallback
-          try {
-            await streamCall.join({ create: true });
-            if (cancelled) return;
-            setJoined(true);
-            streamCall.camera.enable();
-            streamCall.microphone.enable();
-            return;
-          } catch (fallbackErr: unknown) {
-            console.error("Failed to join call (with create fallback):", fallbackErr);
-            setError(`Failed to join call: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`);
-          }
+        }
+
+        // 4. Create call object and join
+        const streamCall = newClient.call(callType, callId);
+        callRef.current = streamCall;
+        console.log("[WorldLens][VideoRoom] joining call", { callType, callId });
+
+        await streamCall.join({ create: true });
+        if (cancelled) {
+          await streamCall.leave().catch(() => {});
+          newClient.disconnectUser();
+          return;
+        }
+        console.log("[WorldLens][VideoRoom] join success");
+
+        // 5. Enable camera & microphone (best-effort)
+        try {
+          await streamCall.camera.enable();
+          console.log("[WorldLens][VideoRoom] camera enabled");
+        } catch (e) {
+          console.warn("[WorldLens][VideoRoom] camera enable failed", e);
+        }
+        try {
+          await streamCall.microphone.enable();
+          console.log("[WorldLens][VideoRoom] microphone enabled");
+        } catch (e) {
+          console.warn("[WorldLens][VideoRoom] microphone enable failed", e);
+        }
+
+        if (cancelled) {
+          await streamCall.leave().catch(() => {});
+          newClient.disconnectUser();
+          return;
+        }
+
+        // 6. All ready — update state in one batch
+        setClient(newClient);
+        setCall(streamCall);
+        setJoined(true);
+        console.log("[WorldLens][VideoRoom] fully initialised");
+      } catch (err) {
+        if (!cancelled) {
+          console.error("[WorldLens][VideoRoom] init failed", err);
+          setError(
+            err instanceof Error ? err.message : "Failed to initialise video"
+          );
         }
       }
-    };
+    }
 
-    tryJoin();
+    init();
 
+    // Cleanup: runs ONLY when callId changes (shouldn't) or on unmount
     return () => {
       cancelled = true;
-      streamCall.leave().catch(console.error);
+      console.log("[WorldLens][VideoRoom] cleanup — leaving call & disconnecting");
+      callRef.current?.leave().catch(() => {});
+      callRef.current = null;
+      clientRef.current?.disconnectUser();
+      clientRef.current = null;
     };
-  }, [client, callId, callType]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [callId]);
 
+  // ------------------------------------------------------------------
+  // Manual leave handler (via Leave Call button)
+  // ------------------------------------------------------------------
   const handleLeave = useCallback(async () => {
-    if (call) {
-      await call.leave();
-      setJoined(false);
+    console.log("[WorldLens][VideoRoom] manual leave requested");
+    if (callRef.current) {
+      await callRef.current.leave().catch(() => {});
+      callRef.current = null;
     }
+    if (clientRef.current) {
+      clientRef.current.disconnectUser();
+      clientRef.current = null;
+    }
+    setJoined(false);
+    setClient(null);
+    setCall(null);
     onLeave?.();
-  }, [call, onLeave]);
+  }, [onLeave]);
 
+  // ------------------------------------------------------------------
+  // Render
+  // ------------------------------------------------------------------
   if (error) {
     return (
       <div className="video-room error">
@@ -213,12 +309,14 @@ export function VideoRoom({
   }
 
   return (
-    <StreamVideo client={client}>
-      <StreamTheme>
-        <StreamCall call={call}>
-          <CallUI onLeave={handleLeave} />
-        </StreamCall>
-      </StreamTheme>
-    </StreamVideo>
+    <VideoErrorBoundary onReset={onLeave}>
+      <StreamVideo client={client}>
+        <StreamTheme>
+          <StreamCall call={call}>
+            <CallUI onLeave={handleLeave} />
+          </StreamCall>
+        </StreamTheme>
+      </StreamVideo>
+    </VideoErrorBoundary>
   );
 }
