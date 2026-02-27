@@ -163,4 +163,66 @@ export async function clearTranscript(): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// OCR / VLM endpoints (Day 3)
+// ---------------------------------------------------------------------------
+
+export interface OCRResult {
+  text: string;
+  provider: string;
+  timestamp: number;
+  source?: string;
+  frame_number?: number;
+  error?: string;
+}
+
+export interface SceneDescription {
+  description: string;
+  provider: string;
+  timestamp: number;
+  error?: string;
+}
+
+/** Get cached OCR results for the overlay */
+export async function getOCRResults(
+  since: number = 0,
+  limit: number = 10
+): Promise<{ results: OCRResult[]; available: boolean }> {
+  try {
+    const res = await fetch(
+      `${BACKEND_URL}/ocr-results?since=${since}&limit=${limit}`
+    );
+    if (!res.ok) return { results: [], available: false };
+    return res.json();
+  } catch {
+    return { results: [], available: false };
+  }
+}
+
+/** Manually trigger OCR read of the current frame */
+export async function triggerOCRRead(
+  prompt: string = ""
+): Promise<OCRResult> {
+  const res = await fetch(`${BACKEND_URL}/ocr/read`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt }),
+  });
+  if (!res.ok) throw new Error("OCR read failed");
+  return res.json();
+}
+
+/** Manually trigger a detailed scene description */
+export async function triggerSceneDescription(
+  prompt: string = ""
+): Promise<SceneDescription> {
+  const res = await fetch(`${BACKEND_URL}/ocr/describe`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt }),
+  });
+  if (!res.ok) throw new Error("Scene description failed");
+  return res.json();
+}
+
 export { STREAM_API_KEY, BACKEND_URL };

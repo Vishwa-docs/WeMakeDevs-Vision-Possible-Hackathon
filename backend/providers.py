@@ -138,8 +138,9 @@ class GeminiAdapter(_BaseAdapter):
 
     provider_id = ProviderID.GEMINI
 
-    def __init__(self) -> None:
-        self._api_key = os.getenv("GOOGLE_API_KEY", "")
+    @property
+    def _api_key(self) -> str:
+        return os.getenv("GOOGLE_API_KEY", "")
 
     async def caption(self, image_bytes: bytes, prompt: str = "Describe this image.") -> str:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -171,8 +172,11 @@ class HuggingFaceAdapter(_BaseAdapter):
     provider_id = ProviderID.HUGGINGFACE
 
     def __init__(self, model: str = "Salesforce/blip-image-captioning-large") -> None:
-        self._api_key = os.getenv("HF_API_TOKEN", os.getenv("HF_TOKEN", ""))
         self._model = model
+
+    @property
+    def _api_key(self) -> str:
+        return os.getenv("HF_API_TOKEN", os.getenv("HF_TOKEN", ""))
 
     async def caption(self, image_bytes: bytes, prompt: str = "Describe this image.") -> str:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -197,8 +201,11 @@ class NvidiaAdapter(_BaseAdapter):
     provider_id = ProviderID.NVIDIA
 
     def __init__(self, model: str = "nvidia/cosmos-reason2-8b") -> None:
-        self._api_key = os.getenv("NGC_API_KEY", os.getenv("NVIDIA_API_KEY", ""))
         self._model = model
+
+    @property
+    def _api_key(self) -> str:
+        return os.getenv("NGC_API_KEY", os.getenv("NVIDIA_API_KEY", ""))
 
     async def caption(self, image_bytes: bytes, prompt: str = "Describe this image.") -> str:
         b64 = base64.b64encode(image_bytes).decode()
@@ -241,8 +248,11 @@ class GrokAdapter(_BaseAdapter):
     provider_id = ProviderID.GROK
 
     def __init__(self, model: str = "grok-4-latest") -> None:
-        self._api_key = os.getenv("XAI_API_KEY", "")
         self._model = model
+
+    @property
+    def _api_key(self) -> str:
+        return os.getenv("XAI_API_KEY", "")
 
     async def caption(self, image_bytes: bytes, prompt: str = "Describe this image.") -> str:
         b64 = base64.b64encode(image_bytes).decode()
@@ -284,9 +294,13 @@ class AzureOpenAIAdapter(_BaseAdapter):
 
     provider_id = ProviderID.AZURE_OPENAI
 
-    def __init__(self) -> None:
-        self._endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "")
-        self._api_key = os.getenv("AZURE_OPENAI_API_KEY", "")
+    @property
+    def _endpoint(self) -> str:
+        return os.getenv("AZURE_OPENAI_ENDPOINT", "")
+
+    @property
+    def _api_key(self) -> str:
+        return os.getenv("AZURE_OPENAI_API_KEY", "")
 
     async def caption(self, image_bytes: bytes, prompt: str = "Describe this image.") -> str:
         b64 = base64.b64encode(image_bytes).decode()
