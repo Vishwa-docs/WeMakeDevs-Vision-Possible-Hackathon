@@ -146,21 +146,21 @@ class TestHapticSeverityMapping:
     """Verify the severity → priority/sound/duration mapping logic."""
 
     def test_critical_mapping(self):
-        mapping = {"critical": (10, "siren", 3000), "warning": (5, "beep", 2000), "caution": (2, "chime", 1500)}
+        mapping = {"critical": (0, "siren", 3000), "warning": (1, "beep", 2000), "caution": (2, "chime", 1500)}
         priority, sound, dur = mapping["critical"]
-        assert priority == 10
+        assert priority == 0
         assert sound == "siren"
         assert dur == 3000
 
     def test_warning_mapping(self):
-        mapping = {"critical": (10, "siren", 3000), "warning": (5, "beep", 2000), "caution": (2, "chime", 1500)}
+        mapping = {"critical": (0, "siren", 3000), "warning": (1, "beep", 2000), "caution": (2, "chime", 1500)}
         priority, sound, dur = mapping["warning"]
-        assert priority == 5
+        assert priority == 1
         assert sound == "beep"
         assert dur == 2000
 
     def test_caution_mapping(self):
-        mapping = {"critical": (10, "siren", 3000), "warning": (5, "beep", 2000), "caution": (2, "chime", 1500)}
+        mapping = {"critical": (0, "siren", 3000), "warning": (1, "beep", 2000), "caution": (2, "chime", 1500)}
         priority, sound, dur = mapping["caution"]
         assert priority == 2
         assert sound == "chime"

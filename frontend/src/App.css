@@ -228,6 +228,88 @@
   margin-top: 1rem;
 }
 
+/* --- Landing page enhancements --- */
+.landing-hero-icon {
+  font-size: 3.5rem;
+  line-height: 1;
+  margin-bottom: 0.75rem;
+  filter: drop-shadow(0 0 24px #6c63ff66);
+  animation: hero-float 4s ease-in-out infinite;
+}
+
+@keyframes hero-float {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-8px); }
+}
+
+.landing-subtitle {
+  font-size: 0.95rem;
+  color: #a78bfa;
+  font-weight: 600;
+  margin-top: 0.25rem;
+}
+
+.mode-cards {
+  display: flex;
+  gap: 0.75rem;
+  margin: 1.25rem 0;
+  justify-content: center;
+}
+
+.mode-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.75rem;
+  background: #0d0d14;
+  border: 1px solid #1e1e2e;
+  border-radius: 10px;
+  cursor: default;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.mode-card.active {
+  border-color: #6c63ff;
+  box-shadow: 0 0 12px #6c63ff33;
+  background: #12121e;
+}
+
+.mode-card-icon {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.mode-card-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #d0d0e8;
+}
+
+.mode-card-desc {
+  font-size: 0.7rem;
+  color: #777;
+  line-height: 1.4;
+}
+
+.feature-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  justify-content: center;
+  margin-top: 1.25rem;
+}
+
+.feature-badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.25rem 0.6rem;
+  background: #12121e;
+  border: 1px solid #2e2e4e;
+  border-radius: 20px;
+  color: #a78bfa;
+}
+
 /* --- Buttons --- */
 .btn {
   padding: 0.5rem 1.2rem;
@@ -267,6 +349,22 @@
 
 .btn-danger:hover {
   background: #dc2626;
+}
+
+.btn-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: btn-spin 0.7s linear infinite;
+  margin-right: 0.4rem;
+  vertical-align: middle;
+}
+
+@keyframes btn-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* --- Session Layout --- */
@@ -952,6 +1050,71 @@
 
 .sidebar-section:last-child {
   border-bottom: none;
+}
+
+/* --- Sidebar Section Headers --- */
+.sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  background: #0d0d14;
+  border-bottom: 1px solid #1e1e2e;
+}
+
+.sidebar-section-badge {
+  background: #1e1e2e;
+  color: #a78bfa;
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 0.15rem 0.45rem;
+  border-radius: 10px;
+  border: 1px solid #2e2e4e;
+}
+
+.telemetry-live-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: #22c55e;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.live-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: #22c55e;
+  border-radius: 50%;
+  animation: live-dot-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes live-dot-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 4px #22c55e; }
+  50%       { opacity: 0.4; box-shadow: none; }
+}
+
+/* --- Speaking indicator dot --- */
+.speaking-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: #22c55e;
+  border-radius: 50%;
+  margin-right: 0.35rem;
+  animation: speaking-pulse 0.8s ease-in-out infinite;
+}
+
+@keyframes speaking-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%       { transform: scale(1.4); opacity: 0.6; }
 }
 
 /* --- VLM Action Buttons --- */

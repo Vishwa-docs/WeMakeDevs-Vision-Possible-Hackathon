@@ -248,7 +248,7 @@ export async function getTelemetry(): Promise<TelemetryData | null> {
 
 export interface HazardPollResponse {
   alerts: HazardAlert[];
-  since: number;
+  since?: number;
   count: number;
 }
 
