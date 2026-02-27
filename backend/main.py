@@ -21,6 +21,7 @@ import uuid
 from collections import deque
 
 from dotenv import load_dotenv
+from fastapi import Body
 
 from vision_agents.core import Agent, AgentLauncher, Runner, ServeOptions, User
 from vision_agents.core.llm.events import (
@@ -42,8 +43,14 @@ from processors import (
     ObjectDetectedEvent,
     HazardDetectedEvent,
     SceneSummaryEvent,
+    OCRProcessor,
+    OCRResultEvent,
+    SceneDescriptionEvent,
 )
 from providers import provider_manager, ProviderID
+
+# Module-level reference to the active OCR processor (for API endpoints)
+_active_ocr_processor: OCRProcessor | None = None
 
 # ---------------------------------------------------------------------------
 # Config
@@ -89,11 +96,20 @@ Detection pipeline. The system detects objects (people, vehicles, obstacles),
 estimates their direction (left/centre/right) and distance (near/medium/far),
 and tracks approaching objects via bounding-box growth rate.
 
+You also have access to advanced OCR and scene-description tools:
+  • read_text_in_scene — reads ALL text visible in the current frame (signs,
+    bus numbers, labels, notices). Use this when the user asks about text.
+  • describe_scene_detailed — produces a dense description of the full scene
+    using an advanced Vision-Language Model (NVIDIA Cosmos / Gemini). Use this
+    when the user asks "What is around me?" or "Describe the scene".
+
 Behaviour:
   • Nearby obstacles and hazards — announce them IMMEDIATELY with direction
     and distance (e.g. "Person approaching from the left, about 3 metres").
-  • Text visible in the scene (signs, bus numbers, labels) — read them aloud.
-  • General scene layout when asked ("What is around me?").
+  • Text visible in the scene (signs, bus numbers, labels) — call the
+    read_text_in_scene tool and read the result aloud.
+  • General scene layout when asked ("What is around me?") — call the
+    describe_scene_detailed tool.
   • When the user asks for directions, use the get_walking_directions tool.
   • When the user asks "What did I see earlier?", use the search_memory tool.
 
@@ -113,8 +129,19 @@ def _get_instructions() -> str:
 
 def _build_processors() -> list:
     """Instantiate the vision processors for the current mode."""
+    global _active_ocr_processor
+
+    # OCR processor runs in both modes (captures frames for on-demand VLM)
+    ocr = OCRProcessor(
+        scan_interval=20.0,   # background OCR scan every 20s
+        max_cached_results=30,
+        fps=1,                # capture 1 frame/s for OCR buffer
+    )
+    ocr.set_provider_manager(provider_manager)
+    _active_ocr_processor = ocr
+
     if AGENT_MODE == "signbridge":
-        logger.info("Building SignBridge processor (YOLO Pose)")
+        logger.info("Building SignBridge processor (YOLO Pose + OCR)")
         return [
             SignBridgeProcessor(
                 fps=10,
@@ -122,10 +149,11 @@ def _build_processors() -> list:
                 model_path="yolo11n-pose.pt",
                 device="cpu",
                 gesture_buffer_frames=30,
-            )
+            ),
+            ocr,
         ]
     else:
-        logger.info("Building GuideLens processor (YOLO Detection)")
+        logger.info("Building GuideLens processor (YOLO Detection + OCR)")
         return [
             GuideLensProcessor(
                 fps=5,
@@ -133,7 +161,8 @@ def _build_processors() -> list:
                 model_path="yolo11n.pt",
                 device="cpu",
                 scene_summary_interval=10.0,
-            )
+            ),
+            ocr,
         ]
 
 
@@ -327,6 +356,42 @@ async def create_agent(**kwargs) -> Agent:
     @agent.events.subscribe
     async def on_scene_summary(event: SceneSummaryEvent):
         logger.info("📸 %s", event.summary)
+
+    @agent.events.subscribe
+    async def on_ocr_result(event: OCRResultEvent):
+        logger.info("📝 OCR [%s]: %s", event.provider, event.text[:100])
+
+    @agent.events.subscribe
+    async def on_scene_description(event: SceneDescriptionEvent):
+        logger.info("🏞️  Scene [%s]: %s", event.provider, event.description[:100])
+
+    # --- OCR / VLM MCP Tools (Day 3) -----------------------------------------
+    @agent.llm.register_function(
+        name="read_text_in_scene",
+        description=(
+            "Read all text visible in the current camera frame. "
+            "Use this when the user asks about signs, labels, bus numbers, "
+            "notices, or any written text in their environment."
+        ),
+    )
+    async def read_text_in_scene(prompt: str = "") -> dict:
+        if _active_ocr_processor is None:
+            return {"text": "", "error": "OCR processor not active"}
+        return await _active_ocr_processor.read_text(prompt)
+
+    @agent.llm.register_function(
+        name="describe_scene_detailed",
+        description=(
+            "Generate a detailed, dense description of the current scene "
+            "using an advanced Vision-Language Model (NVIDIA Cosmos / Gemini). "
+            "Use when the user asks 'What is around me?', 'Describe this "
+            "place', or needs a comprehensive overview of their environment."
+        ),
+    )
+    async def describe_scene_detailed(prompt: str = "") -> dict:
+        if _active_ocr_processor is None:
+            return {"description": "", "error": "OCR processor not active"}
+        return await _active_ocr_processor.describe_scene(prompt)
 
     # --- MCP Tool stubs (wired up on Day 4) --------------------------------
     @agent.llm.register_function(
@@ -531,5 +596,31 @@ if __name__ == "__main__":
         """Clear the transcript log (called when a session ends)."""
         _transcript_log.clear()
         return {"ok": True}
+
+    # ----- OCR / VLM endpoints (Day 3) -----
+
+    @runner.fast_api.get("/ocr-results")
+    def get_ocr_results(since: float = 0, limit: int = 10):
+        """Get cached OCR results for frontend overlay. Optionally filter by timestamp."""
+        if _active_ocr_processor is None:
+            return {"results": [], "available": False}
+        results = _active_ocr_processor.get_recent_results(since=since, limit=limit)
+        return {"results": results, "available": True}
+
+    @runner.fast_api.post("/ocr/read")
+    async def trigger_ocr_read(prompt: str = Body(default="")):
+        """Manually trigger an OCR read of the current frame."""
+        if _active_ocr_processor is None:
+            return {"error": "OCR processor not active"}
+        result = await _active_ocr_processor.read_text(prompt)
+        return result
+
+    @runner.fast_api.post("/ocr/describe")
+    async def trigger_scene_describe(prompt: str = Body(default="")):
+        """Manually trigger a detailed scene description."""
+        if _active_ocr_processor is None:
+            return {"error": "OCR processor not active"}
+        result = await _active_ocr_processor.describe_scene(prompt)
+        return result
 
     runner.cli()

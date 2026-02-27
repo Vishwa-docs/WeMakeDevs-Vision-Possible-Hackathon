@@ -1,8 +1,9 @@
 /**
  * WorldLens — Main Application
- * Day 2: Core layout with Stream Video, status bar, chat log, mode toggle.
+ * Day 3: Core layout with Stream Video, status bar, chat log, mode toggle,
+ * 3D Avatar with lip-sync, and OCR text overlay.
  */
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useAgentSession } from "./hooks/useAgentSession";
 import { StatusBar } from "./components/StatusBar";
 import { VideoRoom } from "./components/VideoRoom";
@@ -10,6 +11,8 @@ import { ChatLog } from "./components/ChatLog";
 import { TelemetryPanel } from "./components/TelemetryPanel";
 import { AlertOverlay } from "./components/AlertOverlay";
 import { ProviderSelector } from "./components/ProviderSelector";
+import { Avatar3D } from "./components/Avatar3D";
+import { OCROverlay } from "./components/OCROverlay";
 import { ToastContainer, useToasts } from "./components/Toast";
 import { getTranscript, clearTranscript } from "./utils/api";
 import type { TranscriptEntry, TelemetryData } from "./types";
@@ -47,6 +50,8 @@ function App() {
   const alertActive = false; // placeholder — will become useState once hazard events are wired up
   const [startTime] = useState(Date.now());
   const [uptime, setUptime] = useState(0);
+  const [agentSpeaking, setAgentSpeaking] = useState(false);
+  const agentSpeechTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const onWindowError = (event: ErrorEvent) => {
@@ -96,9 +101,26 @@ function App() {
           })),
         ]);
         lastTranscriptTs.current = data.entries[data.entries.length - 1].timestamp;
+
+        // Detect agent speech for avatar lip-sync
+        const hasAgentSpeech = data.entries.some((e) => e.speaker === "agent");
+        if (hasAgentSpeech) {
+          setAgentSpeaking(true);
+          // Clear previous timer
+          if (agentSpeechTimer.current) {
+            clearTimeout(agentSpeechTimer.current);
+          }
+          // Stop speaking after 3s of no new agent transcript
+          agentSpeechTimer.current = setTimeout(() => {
+            setAgentSpeaking(false);
+          }, 3000);
+        }
       }
     }, 1500);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      if (agentSpeechTimer.current) clearTimeout(agentSpeechTimer.current);
+    };
   }, [session]);
 
   // Handle mode toggle
@@ -118,10 +140,10 @@ function App() {
     edgeLatency: 24,
     activeVLM:
       status.mode === "signbridge"
-        ? "YOLO-Pose + Gemini"
-        : "YOLO-Detect + Gemini",
+        ? "YOLO-Pose + Gemini + OCR"
+        : "YOLO-Detect + Gemini + OCR",
     fps: status.mode === "signbridge" ? 10 : 5,
-    processorCount: status.connected ? 1 : 0,
+    processorCount: status.connected ? 2 : 0, // YOLO + OCR
     uptime,
   };
 
@@ -235,16 +257,36 @@ function App() {
         ) : (
           /* Active session */
           <div className="session-layout">
-            {/* Video area */}
+            {/* Video area with OCR overlay */}
             <div className="video-area">
               <VideoRoom
                 callId={session.call_id || callId}
                 onLeave={handleStop}
               />
+              <OCROverlay active={!!session} pollInterval={5000} />
             </div>
 
             {/* Sidebar */}
             <aside className="sidebar">
+              {/* 3D Avatar (SignBridge mode) */}
+              {status.mode === "signbridge" && (
+                <div className="avatar-panel sidebar-section">
+                  <div className="avatar-panel-header">
+                    <span>SignBridge Avatar</span>
+                    <span
+                      className={`speaking-indicator ${
+                        agentSpeaking ? "active" : "silent"
+                      }`}
+                    >
+                      {agentSpeaking ? "Speaking..." : "Silent"}
+                    </span>
+                  </div>
+                  <Avatar3D
+                    isSpeaking={agentSpeaking}
+                    style={{ height: 220 }}
+                  />
+                </div>
+              )}
               <ChatLog entries={transcript} />
               <TelemetryPanel data={telemetry} />
             </aside>

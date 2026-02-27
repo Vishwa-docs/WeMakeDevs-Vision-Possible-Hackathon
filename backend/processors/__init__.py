@@ -11,6 +11,11 @@ from .guidelens_processor import (
     HazardDetectedEvent,
     SceneSummaryEvent,
 )
+from .ocr_processor import (
+    OCRProcessor,
+    OCRResultEvent,
+    SceneDescriptionEvent,
+)
 
 __all__ = [
     "SignBridgeProcessor",
@@ -21,4 +26,7 @@ __all__ = [
     "ObjectDetectedEvent",
     "HazardDetectedEvent",
     "SceneSummaryEvent",
+    "OCRProcessor",
+    "OCRResultEvent",
+    "SceneDescriptionEvent",
 ]
