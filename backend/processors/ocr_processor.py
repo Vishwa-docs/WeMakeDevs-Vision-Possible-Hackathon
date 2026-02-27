@@ -23,7 +23,7 @@ import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 import av
 import aiortc
@@ -76,6 +76,10 @@ class OCRProcessor(VideoProcessor):
 
     name = "ocr_vlm"
 
+    # Maximum allowed prompt length to prevent abuse / prompt-injection attacks.
+    # These methods should only be called from trusted MCP tools, not from raw user input.
+    _MAX_PROMPT_LEN = 500
+
     def __init__(
         self,
         scan_interval: float = 15.0,
@@ -104,14 +108,14 @@ class OCRProcessor(VideoProcessor):
         # Provider manager reference — set by main.py after creation
         self._provider_manager = None
 
-    def set_provider_manager(self, pm):
+    def set_provider_manager(self, pm: Any) -> None:
         """Inject the ProviderManager for VLM calls."""
         self._provider_manager = pm
 
     # ------------------------------------------------------------------
     # Agent lifecycle
     # ------------------------------------------------------------------
-    def attach_agent(self, agent):
+    def attach_agent(self, agent: Any) -> None:
         self._agent = agent
         self._events = agent.events
         self._events.register(OCRResultEvent)
@@ -161,7 +165,18 @@ class OCRProcessor(VideoProcessor):
         """
         Read text visible in the most recent frame.
         Returns a dict with 'text', 'provider', 'timestamp'.
+
+        NOTE: This method should only be called from trusted MCP tools,
+        not directly from raw user input.
         """
+        if len(prompt) > self._MAX_PROMPT_LEN:
+            logger.warning(
+                "read_text: prompt truncated from %d to %d chars",
+                len(prompt),
+                self._MAX_PROMPT_LEN,
+            )
+            prompt = prompt[: self._MAX_PROMPT_LEN]
+
         img = await self._get_latest_frame()
         if img is None:
             return {
@@ -226,7 +241,18 @@ class OCRProcessor(VideoProcessor):
         """
         Generate a detailed scene description from the current frame.
         Uses NVIDIA/Gemini for dense visual reasoning.
+
+        NOTE: This method should only be called from trusted MCP tools,
+        not directly from raw user input.
         """
+        if len(prompt) > self._MAX_PROMPT_LEN:
+            logger.warning(
+                "describe_scene: prompt truncated from %d to %d chars",
+                len(prompt),
+                self._MAX_PROMPT_LEN,
+            )
+            prompt = prompt[: self._MAX_PROMPT_LEN]
+
         img = await self._get_latest_frame()
         if img is None:
             return {

@@ -21,6 +21,7 @@ import uuid
 from collections import deque
 
 from dotenv import load_dotenv
+from fastapi import Body
 
 from vision_agents.core import Agent, AgentLauncher, Runner, ServeOptions, User
 from vision_agents.core.llm.events import (
@@ -607,7 +608,7 @@ if __name__ == "__main__":
         return {"results": results, "available": True}
 
     @runner.fast_api.post("/ocr/read")
-    async def trigger_ocr_read(prompt: str = ""):
+    async def trigger_ocr_read(prompt: str = Body(default="")):
         """Manually trigger an OCR read of the current frame."""
         if _active_ocr_processor is None:
             return {"error": "OCR processor not active"}
@@ -615,7 +616,7 @@ if __name__ == "__main__":
         return result
 
     @runner.fast_api.post("/ocr/describe")
-    async def trigger_scene_describe(prompt: str = ""):
+    async def trigger_scene_describe(prompt: str = Body(default="")):
         """Manually trigger a detailed scene description."""
         if _active_ocr_processor is None:
             return {"error": "OCR processor not active"}
