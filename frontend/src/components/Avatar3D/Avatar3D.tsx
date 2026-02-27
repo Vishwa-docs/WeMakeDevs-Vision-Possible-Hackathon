@@ -13,7 +13,7 @@
  * The `isSpeaking` prop should be set to true whenever the agent is
  * producing speech (detected via transcript activity or audio stream).
  */
-import React, { useRef, useEffect, useMemo, Suspense } from "react";
+import React, { useRef, useEffect, Suspense } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, useGLTF, Environment } from "@react-three/drei";
 import * as THREE from "three";
@@ -180,7 +180,7 @@ export function Avatar3D({
   const url = avatarUrl || DEFAULT_AVATAR_URL;
 
   // Preload the model
-  useMemo(() => {
+  useEffect(() => {
     useGLTF.preload(url);
   }, [url]);
 

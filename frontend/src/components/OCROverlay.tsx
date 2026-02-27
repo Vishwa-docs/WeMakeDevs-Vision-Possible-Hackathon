@@ -40,16 +40,20 @@ export function OCROverlay({
       try {
         const data = await getOCRResults(lastTimestamp.current);
         if (data.results && data.results.length > 0) {
+          let shouldUpdateLastTimestamp = false;
           setResults((prev) => {
             const newResults = data.results.filter(
               (r: OCRResult) =>
                 !prev.some((p) => Math.abs(p.timestamp - r.timestamp) < 0.5)
             );
             if (newResults.length === 0) return prev;
-            lastTimestamp.current =
-              data.results[data.results.length - 1].timestamp;
+            shouldUpdateLastTimestamp = true;
             return [...prev, ...newResults].slice(-10); // Keep max 10
           });
+          if (shouldUpdateLastTimestamp) {
+            lastTimestamp.current =
+              data.results[data.results.length - 1].timestamp;
+          }
         }
       } catch {
         // Silent fail — OCR is non-critical
