@@ -1,15 +1,15 @@
 """
 GuideLens Processor — Environmental Awareness for Visually Impaired
 ====================================================================
-Day 2: Full implementation with YOLOv11 object detection, hazard analysis,
-bounding-box proximity tracking, and direction/distance estimation.
+Day 4: Enhanced with spatial memory integration, navigation engine,
+and smart continuous monitoring.
 
 Architecture:
   Video Frame → YOLO Detection → Bounding Boxes → Hazard Analyser
-                      ↓                               ↓
-               Annotated Frame              HazardDetectedEvent
-                      ↓                     ObjectDetectedEvent
-              Published Video Track
+                      ↓                   ↓             ↓
+               Annotated Frame    NavigationEngine  SpatialMemory
+                      ↓             ↓                    ↓
+              Published Video   Smart Alerts        SQLite DB
 
 Features:
   - Detects 80 COCO object classes via YOLOv11
@@ -18,7 +18,9 @@ Features:
   - Estimates object direction (left / centre / right)
   - Estimates object distance (near / medium / far) from bbox area ratio
   - Emits structured events for hazards and general detections
-  - Logs detections for spatial-memory integration (Day 4)
+  - Logs detections to async SQLite spatial memory
+  - Smart announcements via NavigationEngine (change-only, priority-based)
+  - Integrated Navigation, Assistant, and Reading sub-modes
 """
 
 import asyncio
@@ -157,6 +159,11 @@ class GuideLensProcessor(VideoProcessorPublisher):
 
     Receives video frames, detects objects, analyses hazard proximity,
     and publishes annotated frames with labelled bounding boxes.
+
+    Day 4 enhancements:
+      - Integrated with SpatialMemory (async SQLite) for detection logging
+      - Integrated with NavigationEngine for smart change-only announcements
+      - Background spatial memory sync loop
     """
 
     name = "guidelens_detection"
@@ -186,6 +193,10 @@ class GuideLensProcessor(VideoProcessorPublisher):
         self._last_summary_time = 0.0
         self._detection_log: list[dict] = []
 
+        # Day 4: Spatial memory & navigation engine integration
+        self._spatial_memory = None
+        self._navigation_engine = None
+
         self._load_model()
 
     def _load_model(self):
@@ -209,6 +220,16 @@ class GuideLensProcessor(VideoProcessorPublisher):
     # ------------------------------------------------------------------
     # Agent lifecycle
     # ------------------------------------------------------------------
+    def set_spatial_memory(self, memory) -> None:
+        """Inject the SpatialMemory instance for detection logging."""
+        self._spatial_memory = memory
+        logger.info("GuideLensProcessor: spatial memory connected")
+
+    def set_navigation_engine(self, engine) -> None:
+        """Inject the NavigationEngine for smart announcements."""
+        self._navigation_engine = engine
+        logger.info("GuideLensProcessor: navigation engine connected")
+
     def attach_agent(self, agent):
         """Register custom events with the agent's event system."""
         self._agent = agent
@@ -493,26 +514,53 @@ class GuideLensProcessor(VideoProcessorPublisher):
     # Detection log (for spatial memory integration)
     # ------------------------------------------------------------------
     def _log_detections(self, detections: list[dict], timestamp: float):
-        """Store detections locally for spatial-memory sync (Day 4)."""
+        """Store detections locally and sync to spatial memory."""
+        enriched = []
+        for d in detections:
+            direction = self._estimate_direction(d["center_x"], 1)
+            distance = self._estimate_distance(d["area_ratio"])
+            enriched.append({
+                "class": d["class"],
+                "confidence": d["confidence"],
+                "direction": direction,
+                "distance": distance,
+                "frame_number": self._frame_count,
+            })
+
         entry = {
             "frame": self._frame_count,
             "timestamp": timestamp,
-            "objects": [
-                {
-                    "class": d["class"],
-                    "confidence": d["confidence"],
-                    "direction": self._estimate_direction(
-                        d["center_x"],
-                        1,  # normalised
-                    ),
-                    "distance": self._estimate_distance(d["area_ratio"]),
-                }
-                for d in detections
-            ],
+            "objects": enriched,
         }
         self._detection_log.append(entry)
         if len(self._detection_log) > 500:
             self._detection_log = self._detection_log[-250:]
+
+        # Day 4: Async log to spatial memory (non-blocking)
+        if self._spatial_memory and enriched:
+            asyncio.create_task(self._sync_to_memory(enriched))
+
+        # Day 4: Process through navigation engine for smart announcements
+        if self._navigation_engine and enriched:
+            announcements = self._navigation_engine.process_detections(enriched)
+            if announcements:
+                for ann in announcements:
+                    logger.info(
+                        "NAV: [P%d] %s",
+                        ann["priority"],
+                        ann["text"],
+                    )
+
+    async def _sync_to_memory(self, detections: list[dict]) -> None:
+        """Sync detections to spatial memory (async, fire-and-forget)."""
+        try:
+            logged = await self._spatial_memory.log_detection_batch(detections)
+            if logged > 0:
+                logger.debug(
+                    "Synced %d detections to spatial memory", logged
+                )
+        except Exception as e:
+            logger.debug("Spatial memory sync error: %s", e)
 
     @property
     def detection_history(self) -> list[dict]:

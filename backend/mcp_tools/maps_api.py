@@ -1,16 +1,27 @@
 """
 Google Maps Navigation Tool
 =============================
-MCP tool for fetching walking directions via Google Maps Directions API.
-The agent calls this when a user asks "How do I get to X?"
+Day 4: Full implementation with live Google Maps Directions API,
+geocoding, nearby places search, and graceful fallback.
 
-Day 4: Full implementation.
-Day 1: Interface scaffold.
+MCP tool for fetching walking directions. The agent calls this when a
+user asks "How do I get to X?" or "Navigate to the nearest pharmacy."
+
+Features:
+  - Walking directions with turn-by-turn instructions
+  - Geocoding (address → lat/lng) for precise locations
+  - Nearby places search ("nearest pharmacy", "closest bus stop")
+  - IP-based approximate location when GPS not available
+  - Structured output with distance, duration, and clean instructions
+  - Graceful fallback with hardcoded stub when API key is missing
 """
+
+from __future__ import annotations
 
 import logging
 import os
 import re
+from typing import Optional
 
 import httpx
 
@@ -18,7 +29,46 @@ logger = logging.getLogger("mcp.maps")
 
 MAPS_API_KEY = os.getenv("MAPS_API_KEY", "")
 DIRECTIONS_URL = "https://maps.googleapis.com/maps/api/directions/json"
+GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
+PLACES_NEARBY_URL = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+PLACES_TEXT_URL = "https://maps.googleapis.com/maps/api/place/textsearch/json"
+GEOLOCATE_URL = "https://www.googleapis.com/geolocation/v1/geolocate"
 
+# Timeout for all Google Maps API calls
+_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
+
+
+def _has_valid_key() -> bool:
+    """Check if a valid Maps API key is configured."""
+    return bool(MAPS_API_KEY) and not MAPS_API_KEY.startswith("your_")
+
+
+def _clean_html(html_text: str) -> str:
+    """Strip HTML tags from Google Maps instructions."""
+    return re.sub(r"<[^>]+>", " ", html_text).strip()
+
+
+def _clean_html_for_speech(html_text: str) -> str:
+    """
+    Convert HTML directions to clean speech-friendly text.
+    Converts tags like <b> to emphasis and strips the rest.
+    """
+    # Replace <b>...</b> with the content (no tags)
+    text = re.sub(r"<b>(.*?)</b>", r"\1", html_text)
+    # Replace <div> with a period-space to create natural sentence breaks
+    text = re.sub(r"<div[^>]*>", ". ", text)
+    # Strip all remaining HTML tags
+    text = re.sub(r"<[^>]+>", " ", text)
+    # Clean up whitespace
+    text = re.sub(r"\s+", " ", text).strip()
+    # Fix double periods
+    text = text.replace("..", ".").replace(". .", ".")
+    return text
+
+
+# ---------------------------------------------------------------------------
+# Core API functions
+# ---------------------------------------------------------------------------
 
 async def get_walking_directions(
     destination: str,
@@ -28,59 +78,375 @@ async def get_walking_directions(
     Fetch step-by-step walking directions from Google Maps.
 
     Args:
-        destination: Where the user wants to go.
-        origin: Starting point (default: "current location" → uses GPS/IP).
+        destination: Where the user wants to go (address, place, or
+            "nearest X" for nearby places search).
+        origin: Starting point (default: "current location" — the agent
+            should describe what the user means, or use IP geolocation).
 
     Returns:
-        Dict with route summary and turn-by-turn directions.
+        Dict with route summary, step-by-step directions, and metadata.
     """
-    if not MAPS_API_KEY or MAPS_API_KEY.startswith("your_"):
+    if not _has_valid_key():
         logger.warning("MAPS_API_KEY not configured — returning stub")
-        return {
-            "status": "stub",
-            "message": f"Directions to '{destination}' require a valid MAPS_API_KEY.",
-            "steps": [
-                "Walk north for 100 meters",
-                "Turn right at the intersection",
-                "Your destination will be on the left",
-            ],
-        }
+        return _stub_directions(destination)
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        # Handle "nearest X" / "closest X" queries via Places API
+        if _is_nearby_query(destination):
+            place_type = _extract_place_type(destination)
+            place_result = await search_nearby_places(place_type, origin)
+            if place_result.get("status") == "ok" and place_result.get("places"):
+                # Use first result as the actual destination
+                first_place = place_result["places"][0]
+                destination = first_place.get("address", first_place.get("name", destination))
+                logger.info(
+                    "Resolved 'nearest %s' → %s", place_type, destination
+                )
+
+        # Resolve origin if it's "current location"
+        actual_origin = origin
+        if origin.lower() in ("current location", "here", "my location"):
+            geo = await _geolocate_ip()
+            if geo:
+                actual_origin = f"{geo['lat']},{geo['lng']}"
+                logger.info("Resolved origin via geolocation: %s", actual_origin)
+            else:
+                actual_origin = origin
+
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.get(
                 DIRECTIONS_URL,
                 params={
-                    "origin": origin,
+                    "origin": actual_origin,
                     "destination": destination,
                     "mode": "walking",
                     "key": MAPS_API_KEY,
+                    "language": "en",
                 },
             )
             data = resp.json()
 
         if data.get("status") != "OK":
-            return {"status": "error", "message": data.get("status", "Unknown error")}
+            error_msg = data.get("status", "Unknown error")
+            # Provide helpful error messages
+            if error_msg == "ZERO_RESULTS":
+                return {
+                    "status": "no_route",
+                    "message": f"Sorry, I couldn't find walking directions to '{destination}'. "
+                               "It might be too far to walk, or the location wasn't found.",
+                }
+            elif error_msg == "NOT_FOUND":
+                return {
+                    "status": "not_found",
+                    "message": f"I couldn't find the location '{destination}'. "
+                               "Could you be more specific?",
+                }
+            return {"status": "error", "message": error_msg}
 
         route = data["routes"][0]
         leg = route["legs"][0]
+
+        # Build speech-friendly step-by-step directions
         steps = []
-        for step in leg["steps"]:
-            # Strip HTML tags from instructions
+        for i, step in enumerate(leg["steps"], 1):
             instruction = step.get("html_instructions", "")
-            clean = re.sub(r"<[^>]+>", " ", instruction).strip()
+            clean = _clean_html_for_speech(instruction)
             steps.append({
+                "step_number": i,
                 "instruction": clean,
                 "distance": step["distance"]["text"],
                 "duration": step["duration"]["text"],
             })
 
+        # Build a concise spoken summary
+        total_distance = leg["distance"]["text"]
+        total_duration = leg["duration"]["text"]
+        first_step = steps[0]["instruction"] if steps else "Start walking"
+
+        spoken_summary = (
+            f"Walking to {leg['end_address']}. "
+            f"Total distance: {total_distance}, about {total_duration}. "
+            f"To start: {first_step}."
+        )
+
         return {
             "status": "ok",
-            "summary": f"{leg['distance']['text']} — {leg['duration']['text']}",
+            "summary": f"{total_distance} — {total_duration}",
+            "spoken_summary": spoken_summary,
+            "start_address": leg.get("start_address", actual_origin),
+            "end_address": leg.get("end_address", destination),
+            "total_distance": total_distance,
+            "total_duration": total_duration,
             "steps": steps,
+            "step_count": len(steps),
         }
 
+    except httpx.TimeoutException:
+        logger.error("Maps API timed out for destination: %s", destination)
+        return {
+            "status": "timeout",
+            "message": "The directions service is taking too long. Please try again.",
+        }
     except Exception as e:
         logger.error("Maps API error: %s", e)
         return {"status": "error", "message": str(e)}
+
+
+async def search_nearby_places(
+    place_type: str,
+    location: str = "current location",
+    radius: int = 1000,
+) -> dict:
+    """
+    Search for nearby places of a given type.
+
+    Args:
+        place_type: Type of place (e.g., "pharmacy", "bus stop", "restaurant").
+        location: Center point for the search.
+        radius: Search radius in meters.
+
+    Returns:
+        Dict with list of nearby places and their details.
+    """
+    if not _has_valid_key():
+        return {
+            "status": "stub",
+            "message": f"Nearby '{place_type}' search requires a valid MAPS_API_KEY.",
+            "places": [
+                {"name": f"Example {place_type.title()}", "distance": "200m", "address": "123 Main St"},
+            ],
+        }
+
+    try:
+        # Resolve location
+        lat, lng = None, None
+        if location.lower() in ("current location", "here", "my location"):
+            geo = await _geolocate_ip()
+            if geo:
+                lat, lng = geo["lat"], geo["lng"]
+        else:
+            coords = await _geocode(location)
+            if coords:
+                lat, lng = coords["lat"], coords["lng"]
+
+        if lat is None or lng is None:
+            return {
+                "status": "error",
+                "message": "Could not determine location for nearby search.",
+            }
+
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.get(
+                PLACES_TEXT_URL,
+                params={
+                    "query": place_type,
+                    "location": f"{lat},{lng}",
+                    "radius": radius,
+                    "key": MAPS_API_KEY,
+                },
+            )
+            data = resp.json()
+
+        if data.get("status") not in ("OK", "ZERO_RESULTS"):
+            return {"status": "error", "message": data.get("status", "Unknown error")}
+
+        places = []
+        for result in data.get("results", [])[:5]:
+            place = {
+                "name": result.get("name", ""),
+                "address": result.get("formatted_address", ""),
+                "rating": result.get("rating"),
+                "open_now": result.get("opening_hours", {}).get("open_now"),
+                "place_id": result.get("place_id", ""),
+            }
+            # Calculate approximate distance
+            place_lat = result["geometry"]["location"]["lat"]
+            place_lng = result["geometry"]["location"]["lng"]
+            dist_m = _haversine_distance(lat, lng, place_lat, place_lng)
+            place["distance_meters"] = int(dist_m)
+            place["distance"] = (
+                f"{int(dist_m)}m" if dist_m < 1000 else f"{dist_m / 1000:.1f}km"
+            )
+            places.append(place)
+
+        # Sort by distance
+        places.sort(key=lambda p: p.get("distance_meters", 99999))
+
+        return {
+            "status": "ok",
+            "query": place_type,
+            "places": places,
+            "count": len(places),
+        }
+
+    except Exception as e:
+        logger.error("Nearby places search error: %s", e)
+        return {"status": "error", "message": str(e)}
+
+
+async def get_current_location_info() -> dict:
+    """
+    Get approximate current location info via IP geolocation.
+    Used when GPS is not available.
+    """
+    geo = await _geolocate_ip()
+    if not geo:
+        return {"status": "error", "message": "Could not determine location"}
+
+    # Reverse geocode to get address
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            if _has_valid_key():
+                resp = await client.get(
+                    GEOCODE_URL,
+                    params={
+                        "latlng": f"{geo['lat']},{geo['lng']}",
+                        "key": MAPS_API_KEY,
+                    },
+                )
+                data = resp.json()
+                if data.get("status") == "OK" and data.get("results"):
+                    address = data["results"][0].get("formatted_address", "")
+                    return {
+                        "status": "ok",
+                        "lat": geo["lat"],
+                        "lng": geo["lng"],
+                        "address": address,
+                        "accuracy": geo.get("accuracy", "unknown"),
+                    }
+    except Exception:
+        pass
+
+    return {
+        "status": "ok",
+        "lat": geo["lat"],
+        "lng": geo["lng"],
+        "address": "Approximate location (IP-based)",
+        "accuracy": geo.get("accuracy", "unknown"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
+
+def _is_nearby_query(destination: str) -> bool:
+    """Check if destination is a 'nearest/closest X' type query."""
+    d = destination.lower().strip()
+    return any(d.startswith(prefix) for prefix in (
+        "nearest", "closest", "nearby", "find a", "find the nearest",
+        "where is the nearest", "where is the closest",
+    ))
+
+
+def _extract_place_type(query: str) -> str:
+    """Extract the place type from a 'nearest X' query."""
+    q = query.lower().strip()
+    for prefix in (
+        "where is the nearest", "where is the closest",
+        "find the nearest", "find the closest",
+        "nearest", "closest", "nearby", "find a",
+    ):
+        if q.startswith(prefix):
+            return q[len(prefix):].strip()
+    return q
+
+
+async def _geocode(address: str) -> Optional[dict]:
+    """Geocode an address to lat/lng coordinates."""
+    if not _has_valid_key():
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.get(
+                GEOCODE_URL,
+                params={"address": address, "key": MAPS_API_KEY},
+            )
+            data = resp.json()
+            if data.get("status") == "OK" and data.get("results"):
+                loc = data["results"][0]["geometry"]["location"]
+                return {"lat": loc["lat"], "lng": loc["lng"]}
+    except Exception as e:
+        logger.error("Geocode error: %s", e)
+    return None
+
+
+async def _geolocate_ip() -> Optional[dict]:
+    """Get approximate location via IP geolocation (free fallback)."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            # Try Google geolocation API first (if key available)
+            if _has_valid_key():
+                resp = await client.post(
+                    f"{GEOLOCATE_URL}?key={MAPS_API_KEY}",
+                    json={"considerIp": True},
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    loc = data.get("location", {})
+                    return {
+                        "lat": loc.get("lat"),
+                        "lng": loc.get("lng"),
+                        "accuracy": data.get("accuracy", 0),
+                    }
+
+            # Fallback: ipinfo.io (free, no key needed)
+            resp = await client.get("https://ipinfo.io/json")
+            if resp.status_code == 200:
+                data = resp.json()
+                loc_str = data.get("loc", "")
+                if "," in loc_str:
+                    lat, lng = loc_str.split(",")
+                    return {
+                        "lat": float(lat),
+                        "lng": float(lng),
+                        "accuracy": 5000,
+                        "city": data.get("city", ""),
+                    }
+    except Exception as e:
+        logger.debug("IP geolocation failed: %s", e)
+    return None
+
+
+def _haversine_distance(
+    lat1: float, lng1: float, lat2: float, lng2: float
+) -> float:
+    """Calculate distance between two points in meters (Haversine formula)."""
+    import math
+
+    R = 6371000  # Earth radius in meters
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lng2 - lng1)
+
+    a = (
+        math.sin(d_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    )
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
+
+def _stub_directions(destination: str) -> dict:
+    """Return mock directions when API key is not configured."""
+    return {
+        "status": "stub",
+        "message": (
+            f"Walking directions to '{destination}'. "
+            "Note: Using simulated directions because MAPS_API_KEY is not configured."
+        ),
+        "spoken_summary": (
+            f"I can give you directions to {destination}, but my maps API "
+            "isn't configured yet. In a real setup, I'd provide turn-by-turn "
+            "walking directions."
+        ),
+        "steps": [
+            {"step_number": 1, "instruction": "Walk north for 100 meters", "distance": "100 m", "duration": "1 min"},
+            {"step_number": 2, "instruction": "Turn right at the intersection", "distance": "50 m", "duration": "1 min"},
+            {"step_number": 3, "instruction": "Your destination will be on the left", "distance": "20 m", "duration": "0 min"},
+        ],
+        "step_count": 3,
+        "total_distance": "170 m",
+        "total_duration": "2 mins",
+    }

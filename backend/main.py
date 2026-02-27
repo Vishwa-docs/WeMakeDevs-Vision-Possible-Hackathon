@@ -1,9 +1,13 @@
 """
 WorldLens — Main Agent Entry Point
 ===================================
-Day 2: Core agent with Gemini Realtime voice+vision over GetStream Edge,
-concurrent vision processors (SignBridge YOLO Pose / GuideLens YOLO Detection),
-and mode-switching API.
+Day 4: Agentic tool calling, spatial memory (SQLite), navigation engine,
+Google Maps integration, and multi-mode assistant capabilities.
+
+Modes:
+  - Navigation: Continuous obstacle detection + walking directions
+  - Assistant: On-demand Q&A about the environment
+  - Reading: OCR-focused text reading from signboards, books, phones
 
 Run:
     # Development (console mode — speaks through terminal)
@@ -48,6 +52,13 @@ from processors import (
     SceneDescriptionEvent,
 )
 from providers import provider_manager, ProviderID
+from mcp_tools.spatial_memory import spatial_memory
+from mcp_tools.maps_api import (
+    get_walking_directions as _maps_get_directions,
+    search_nearby_places as _maps_search_nearby,
+    get_current_location_info as _maps_get_location,
+)
+from mcp_tools.navigation_engine import navigation_engine
 
 # Module-level reference to the active OCR processor (for API endpoints)
 _active_ocr_processor: OCRProcessor | None = None
@@ -89,34 +100,54 @@ Behaviour:
 Always be respectful, patient, and clear. Avoid jargon."""
 
 GUIDELENS_INSTRUCTIONS = """You are GuideLens — a real-time environmental awareness assistant for
-visually impaired users.
+visually impaired users. You are their eyes and navigator.
 
 You analyse the user's live camera feed which is processed by a YOLO Object
 Detection pipeline. The system detects objects (people, vehicles, obstacles),
 estimates their direction (left/centre/right) and distance (near/medium/far),
 and tracks approaching objects via bounding-box growth rate.
 
-You also have access to advanced OCR and scene-description tools:
-  • read_text_in_scene — reads ALL text visible in the current frame (signs,
-    bus numbers, labels, notices). Use this when the user asks about text.
-  • describe_scene_detailed — produces a dense description of the full scene
-    using an advanced Vision-Language Model (NVIDIA Cosmos / Gemini). Use this
-    when the user asks "What is around me?" or "Describe the scene".
+You operate in three seamlessly integrated sub-modes:
 
-Behaviour:
-  • Nearby obstacles and hazards — announce them IMMEDIATELY with direction
-    and distance (e.g. "Person approaching from the left, about 3 metres").
-  • Text visible in the scene (signs, bus numbers, labels) — call the
-    read_text_in_scene tool and read the result aloud.
-  • General scene layout when asked ("What is around me?") — call the
-    describe_scene_detailed tool.
-  • When the user asks for directions, use the get_walking_directions tool.
-  • When the user asks "What did I see earlier?", use the search_memory tool.
+1. NAVIGATION MODE (continuous):
+   - Continuously monitor for hazards: potholes, obstacles, vehicles, people
+   - Only announce CHANGES in the environment — don't repeat yourself
+   - Prioritise safety: nearby vehicles/obstacles first, then informational
+   - When the user asks for directions, use get_walking_directions
+   - When they ask "what's nearby?", use search_nearby_places
 
-Rules:
-  - Be extremely concise — the user needs rapid, actionable info.
-  - Prioritise safety above all else.
-  - Speak in natural, conversational sentences."""
+2. ASSISTANT MODE (on-demand):
+   - When the user asks a question (e.g. "What color is that car?",
+     "Who is Elon Musk?", "How's the weather?"), pause navigation and answer
+   - Use describe_scene_detailed for environment questions
+   - Use search_memory to recall previously seen objects
+   - Use get_environment_context for recent detection history
+   - After answering, automatically resume navigation awareness
+
+3. READING MODE (on-demand):
+   - When the user asks you to read something (sign, book, label, phone screen),
+     use read_text_in_scene to read ALL visible text
+   - Read text clearly and slowly for comprehension
+   - If multiple text elements, read them in spatial order (top to bottom)
+
+Available tools:
+  • read_text_in_scene — Read text visible in the camera frame
+  • describe_scene_detailed — Dense VLM scene description
+  • get_walking_directions — Turn-by-turn walking directions via Google Maps
+  • search_nearby_places — Find nearest pharmacy, bus stop, restaurant, etc.
+  • search_memory — Search for previously seen objects ("Have you seen my keys?")
+  • get_environment_context — Get recent detection summary for context
+  • trigger_haptic_alert — Alert the user with a haptic vibration for approaching danger
+
+Behaviour rules:
+  - Be EXTREMELY concise in navigation mode — short, actionable phrases
+  - NEVER repeat the same announcement unless the situation changes
+  - Prioritise SAFETY above all else — obstacles and vehicles first
+  - In assistant mode, give fuller answers but still be efficient
+  - When there's no environmental change, stay SILENT
+  - When the user speaks, pause announcements and listen
+  - Speak in natural, conversational sentences
+  - If the user asks about something you can't see, say so honestly"""
 
 
 def _get_instructions() -> str:
@@ -154,16 +185,17 @@ def _build_processors() -> list:
         ]
     else:
         logger.info("Building GuideLens processor (YOLO Detection + OCR)")
-        return [
-            GuideLensProcessor(
-                fps=5,
-                conf_threshold=0.4,
-                model_path="yolo11n.pt",
-                device="cpu",
-                scene_summary_interval=10.0,
-            ),
-            ocr,
-        ]
+        guidelens = GuideLensProcessor(
+            fps=5,
+            conf_threshold=0.4,
+            model_path="yolo11n.pt",
+            device="cpu",
+            scene_summary_interval=10.0,
+        )
+        # Day 4: Wire spatial memory and navigation engine
+        guidelens.set_spatial_memory(spatial_memory)
+        guidelens.set_navigation_engine(navigation_engine)
+        return [guidelens, ocr]
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +298,11 @@ async def create_agent(**kwargs) -> Agent:
         processors=processors,
     )
 
+    # Day 4: Initialise spatial memory (async SQLite)
+    await spatial_memory.initialise()
+    spatial_memory.set_session_id(f"session-{uuid.uuid4().hex[:8]}")
+    logger.info("Spatial memory initialised with session: %s", spatial_memory._session_id)
+
     # --- Fix word-by-word chat: remove SDK built-in transcript→chat --------
     # The SDK subscribes its own handlers that call conversation.upsert_message
     # with a new UUID per transcript chunk, causing one chat message per word.
@@ -283,6 +320,8 @@ async def create_agent(**kwargs) -> Agent:
     @agent.events.subscribe
     async def on_user_speech(event: RealtimeUserSpeechTranscriptionEvent):
         logger.info("🎤 User: %s", event.text)
+        # Suppress navigation announcements while the user is speaking
+        navigation_engine.on_user_speech()
         if agent.conversation and event.text:
             uid = event.user_id() if hasattr(event, 'user_id') and callable(event.user_id) else "user"
             await _user_buf.add(
@@ -393,25 +432,117 @@ async def create_agent(**kwargs) -> Agent:
             return {"description": "", "error": "OCR processor not active"}
         return await _active_ocr_processor.describe_scene(prompt)
 
-    # --- MCP Tool stubs (wired up on Day 4) --------------------------------
+    # --- MCP Tool: Walking Directions (Day 4 — Live Google Maps) ----------
     @agent.llm.register_function(
         name="get_walking_directions",
-        description="Get step-by-step walking directions from current location to a destination using Google Maps.",
+        description=(
+            "Get step-by-step walking directions from the user's current "
+            "location to a destination using Google Maps. Also handles "
+            "'nearest pharmacy', 'closest bus stop' type queries. Returns "
+            "turn-by-turn instructions the agent should read aloud."
+        ),
     )
     async def get_walking_directions(destination: str) -> dict:
-        return {
-            "status": "stub",
-            "message": f"Walking directions to '{destination}' will be available after Day 4 integration.",
-        }
+        logger.info("MCP tool: get_walking_directions('%s')", destination)
+        result = await _maps_get_directions(destination)
+        # If successful, tell the agent to read the spoken summary
+        if result.get("status") == "ok":
+            return {
+                "status": "ok",
+                "spoken_summary": result.get("spoken_summary", ""),
+                "steps": result.get("steps", []),
+                "total_distance": result.get("total_distance", ""),
+                "total_duration": result.get("total_duration", ""),
+            }
+        return result
 
+    # --- MCP Tool: Search Nearby Places (Day 4) ---------------------------
+    @agent.llm.register_function(
+        name="search_nearby_places",
+        description=(
+            "Search for nearby places of a specific type (e.g., pharmacy, "
+            "bus stop, restaurant, hospital, ATM). Returns a list of the "
+            "closest places with distances."
+        ),
+    )
+    async def search_nearby_places(place_type: str) -> dict:
+        logger.info("MCP tool: search_nearby_places('%s')", place_type)
+        return await _maps_search_nearby(place_type)
+
+    # --- MCP Tool: Search Memory (Day 4 — Live SQLite) --------------------
     @agent.llm.register_function(
         name="search_memory",
-        description="Search the spatial memory database for previously seen objects or events.",
+        description=(
+            "Search the spatial memory database for previously seen objects "
+            "or events. Use when the user asks 'Have you seen my keys?', "
+            "'What did I see earlier?', 'When did you last see a person?'. "
+            "Returns matching detections with time-ago formatting."
+        ),
     )
     async def search_memory(query: str) -> dict:
+        logger.info("MCP tool: search_memory('%s')", query)
+        results = await spatial_memory.search(query, limit=10)
+        if not results:
+            return {
+                "status": "no_results",
+                "message": f"I haven't seen any '{query}' in my memory.",
+                "query": query,
+            }
         return {
-            "status": "stub",
-            "message": f"Memory search for '{query}' will be available after Day 4 integration.",
+            "status": "ok",
+            "query": query,
+            "count": len(results),
+            "results": results,
+        }
+
+    # --- MCP Tool: Environment Context (Day 4) ----------------------------
+    @agent.llm.register_function(
+        name="get_environment_context",
+        description=(
+            "Get a summary of recently detected objects in the environment. "
+            "Use for answering questions about what's around the user or "
+            "providing context for the current scene."
+        ),
+    )
+    async def get_environment_context() -> dict:
+        # Combine navigation engine state + spatial memory
+        nav_summary = navigation_engine.get_environment_summary()
+        mem_context = await spatial_memory.get_environment_context()
+        mem_summary = await spatial_memory.get_summary()
+        return {
+            "status": "ok",
+            "current_scene": nav_summary,
+            "recent_history": mem_context,
+            "memory_stats": {
+                "total_detections": mem_summary.get("total_detections", 0),
+                "unique_objects": mem_summary.get("unique_objects", 0),
+                "recent_5min": mem_summary.get("recent_5min", 0),
+            },
+        }
+
+    # --- MCP Tool: Haptic Alert (Day 4) -----------------------------------
+    @agent.llm.register_function(
+        name="trigger_haptic_alert",
+        description=(
+            "Trigger a haptic/visual alert on the user's device when an "
+            "object is rapidly approaching or an immediate hazard is detected. "
+            "Use sparingly — only for genuinely dangerous situations like "
+            "a vehicle approaching or walking into an obstacle."
+        ),
+    )
+    async def trigger_haptic_alert(reason: str) -> dict:
+        logger.warning("HAPTIC ALERT triggered: %s", reason)
+        # Store the alert for the frontend to pick up
+        navigation_engine._hazard_alerts.append({
+            "text": reason,
+            "priority": 0,
+            "type": "haptic_alert",
+            "class": "agent_triggered",
+            "timestamp": time.time(),
+        })
+        return {
+            "status": "ok",
+            "message": f"Haptic alert triggered: {reason}",
         }
 
     logger.info(
@@ -622,5 +753,52 @@ if __name__ == "__main__":
             return {"error": "OCR processor not active"}
         result = await _active_ocr_processor.describe_scene(prompt)
         return result
+
+    # ------------------------------------------------------------------
+    # Day 4: Memory & Navigation API endpoints
+    # ------------------------------------------------------------------
+
+    @runner.fast_api.get("/memory/search")
+    async def memory_search(q: str = "", limit: int = 10):
+        """Search spatial memory for previously detected objects."""
+        if not q:
+            return {"error": "Missing query parameter 'q'"}
+        results = await spatial_memory.search(q, limit=limit)
+        return {"query": q, "count": len(results), "results": results}
+
+    @runner.fast_api.get("/memory/summary")
+    async def memory_summary():
+        """Get aggregate memory statistics."""
+        return await spatial_memory.get_summary()
+
+    @runner.fast_api.get("/memory/recent")
+    async def memory_recent(limit: int = 20):
+        """Get most recent detections."""
+        results = await spatial_memory.get_recent(limit=limit)
+        return {"count": len(results), "results": results}
+
+    @runner.fast_api.get("/memory/context")
+    async def memory_context():
+        """Get natural-language environment context from memory."""
+        return {"context": await spatial_memory.get_environment_context()}
+
+    @runner.fast_api.get("/navigation/summary")
+    async def nav_summary():
+        """Get current navigation engine environment summary."""
+        return {"summary": navigation_engine.get_environment_summary()}
+
+    @runner.fast_api.get("/navigation/hazards")
+    async def nav_hazards():
+        """Get list of active hazard alerts."""
+        return {"hazards": navigation_engine.get_hazard_alerts()}
+
+    @runner.fast_api.post("/navigation/assistant")
+    async def nav_assistant_toggle(activate: bool = Body(default=True)):
+        """Activate or deactivate assistant mode (pauses navigation announcements)."""
+        if activate:
+            navigation_engine.activate_assistant()
+        else:
+            navigation_engine.deactivate_assistant()
+        return {"assistant_mode": activate}
 
     runner.cli()
