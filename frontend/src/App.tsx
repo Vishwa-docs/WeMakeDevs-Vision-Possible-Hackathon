@@ -52,6 +52,7 @@ function App() {
   const [alertActive, setAlertActive] = useState(false);
   const [currentAlert, setCurrentAlert] = useState<HazardAlert | null>(null);
   const lastHazardTs = useRef(0);
+  const alertDeactivateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Day 5: Real telemetry from backend
   const [telemetry, setTelemetry] = useState<TelemetryData>({
@@ -172,10 +173,14 @@ function App() {
 
         // Auto-deactivate after alert duration so next alert can trigger
         const dur = top.duration_ms || 3000;
-        setTimeout(() => setAlertActive(false), dur + 200);
+        if (alertDeactivateTimer.current) clearTimeout(alertDeactivateTimer.current);
+        alertDeactivateTimer.current = setTimeout(() => setAlertActive(false), dur + 200);
       }
     }, 2000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      if (alertDeactivateTimer.current) clearTimeout(alertDeactivateTimer.current);
+    };
   }, [session]);
 
   // Day 5: Poll backend for real telemetry while session is active
