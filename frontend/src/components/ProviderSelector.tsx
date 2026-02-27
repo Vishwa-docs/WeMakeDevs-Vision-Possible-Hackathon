@@ -110,7 +110,7 @@ export function ProviderSelector({ onFallbackToast }: Props) {
       >
         <span className="provider-icon">{preferredMeta.icon}</span>
         <span className="provider-label">{preferredMeta.label}</span>
-        <span className="provider-chevron">{expanded ? "▲" : "▼"}</span>
+        <span className="chevron">{expanded ? "▲" : "▼"}</span>
       </button>
 
       {/* Expanded: provider list */}
@@ -131,28 +131,28 @@ export function ProviderSelector({ onFallbackToast }: Props) {
             return (
               <button
                 key={pid}
-                className={`provider-option ${isPreferred ? "selected" : ""} ${
+                className={`provider-option ${isPreferred ? "active" : ""} ${
                   !healthy ? "unavailable" : ""
                 } ${inCooldown ? "cooldown" : ""}`}
                 onClick={() => handleSelect(pid)}
                 disabled={loading}
               >
-                <span className="provider-icon">{meta.icon}</span>
-                <div className="provider-info">
-                  <span className="provider-name">
+                <span className="provider-option-icon">{meta.icon}</span>
+                <div className="provider-option-info">
+                  <span className="provider-option-name">
                     {meta.label}
                     {isPreferred && (
                       <span className="preferred-badge">preferred</span>
                     )}
                   </span>
-                  <span className="provider-desc">{meta.description}</span>
+                  <span className="provider-option-desc">{meta.description}</span>
                 </div>
                 <span
                   className={`provider-status-dot ${
                     inCooldown
                       ? "cooldown"
                       : healthy
-                      ? "healthy"
+                      ? "ready"
                       : "unavailable"
                   }`}
                   title={

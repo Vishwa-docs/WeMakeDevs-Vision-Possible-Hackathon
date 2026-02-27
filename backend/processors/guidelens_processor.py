@@ -197,6 +197,13 @@ class GuideLensProcessor(VideoProcessorPublisher):
         self._spatial_memory = None
         self._navigation_engine = None
 
+        # Day 5: Telemetry metrics
+        self._total_objects_detected = 0
+        self._total_hazards_detected = 0
+        self._total_inference_time = 0.0
+        self._inference_count = 0
+        self._start_time = time.time()
+
         self._load_model()
 
     def _load_model(self):
@@ -229,6 +236,25 @@ class GuideLensProcessor(VideoProcessorPublisher):
         """Inject the NavigationEngine for smart announcements."""
         self._navigation_engine = engine
         logger.info("GuideLensProcessor: navigation engine connected")
+
+    def get_telemetry(self) -> dict:
+        """Return real-time telemetry metrics for the /telemetry endpoint."""
+        avg_inference = (
+            (self._total_inference_time / self._inference_count * 1000)
+            if self._inference_count > 0 else 0.0
+        )
+        return {
+            "processor": "guidelens_detection",
+            "model": self.model_path,
+            "device": self.device,
+            "target_fps": self.fps,
+            "frames_processed": self._frame_count,
+            "total_objects_detected": self._total_objects_detected,
+            "total_hazards_detected": self._total_hazards_detected,
+            "avg_inference_ms": round(avg_inference, 1),
+            "inference_count": self._inference_count,
+            "uptime_seconds": round(time.time() - self._start_time, 1),
+        }
 
     def attach_agent(self, agent):
         """Register custom events with the agent's event system."""
@@ -281,11 +307,19 @@ class GuideLensProcessor(VideoProcessorPublisher):
             frame_area = float(h * w)
 
             if self._model is not None:
+                t_inference_start = time.time()
                 annotated_img, detections = await self._run_detection(
                     img, frame_area
                 )
+                t_inference_end = time.time()
+                self._total_inference_time += (t_inference_end - t_inference_start)
+                self._inference_count += 1
 
                 if detections and self._events:
+                    # Day 5: Telemetry counters
+                    self._total_objects_detected += len(detections)
+                    hazard_count = sum(1 for d in detections if d.get("is_hazard"))
+                    self._total_hazards_detected += hazard_count
                     # --- Object detected event ---
                     object_names = [d["class"] for d in detections]
                     self._events.send(
@@ -431,7 +465,7 @@ class GuideLensProcessor(VideoProcessorPublisher):
         frame_area: float,
         timestamp: float,
     ) -> None:
-        """Analyse detections for approaching hazards."""
+        """Analyse detections for approaching hazards and auto-trigger alerts."""
         for det in detections:
             if not det["is_hazard"]:
                 continue
@@ -462,6 +496,48 @@ class GuideLensProcessor(VideoProcessorPublisher):
                         bbox_area_ratio=area_ratio,
                     )
                 )
+
+            # Day 5: Auto-generate haptic alerts for the frontend
+            # based on bbox growth rate (approaching objects)
+            if self._navigation_engine and should_alert:
+                # Determine severity from growth rate + distance
+                if distance == "near" and growth > APPROACH_RATE_THRESHOLD * 2:
+                    severity = "critical"
+                    sound = "siren"
+                elif distance == "near" or growth > APPROACH_RATE_THRESHOLD:
+                    severity = "warning"
+                    sound = "beep"
+                else:
+                    severity = "caution"
+                    sound = "chime"
+
+                # Map direction to standard left/center/right
+                dir_mapped = direction if direction in ("left", "right") else "center"
+
+                alert_key = f"auto_haptic:{cls}:{dir_mapped}"
+                if self._navigation_engine.announcer.should_announce(
+                    alert_key, 0 if severity == "critical" else 1
+                ):
+                    alert_entry = {
+                        "text": f"{cls.capitalize()} {distance}, {dir_mapped}" + (
+                            f" — approaching fast!" if growth > APPROACH_RATE_THRESHOLD else ""
+                        ),
+                        "priority": 0 if severity == "critical" else 1,
+                        "severity": severity,
+                        "type": "auto_haptic",
+                        "class": cls,
+                        "direction": dir_mapped,
+                        "distance": distance,
+                        "growth_rate": round(growth, 4),
+                        "sound": sound,
+                        "duration_ms": 3000 if severity == "critical" else 2000,
+                        "timestamp": timestamp,
+                    }
+                    self._navigation_engine._hazard_alerts.append(alert_entry)
+                    self._navigation_engine.announcer.record_announcement(
+                        alert_key, alert_entry["text"],
+                        0 if severity == "critical" else 1,
+                    )
 
     # ------------------------------------------------------------------
     # Scene summary

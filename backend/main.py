@@ -59,9 +59,19 @@ from mcp_tools.maps_api import (
     get_current_location_info as _maps_get_location,
 )
 from mcp_tools.navigation_engine import navigation_engine
+from mcp_tools.smart_tools import (
+    get_time_and_date as _smart_get_time,
+    get_weather_info as _smart_get_weather,
+    identify_color_in_scene as _smart_identify_color,
+    trigger_emergency as _smart_emergency,
+    get_device_status as _smart_device_status,
+    get_emergency_log,
+)
 
 # Module-level reference to the active OCR processor (for API endpoints)
 _active_ocr_processor: OCRProcessor | None = None
+# Day 5: References to active processors for telemetry
+_active_processor_refs: list = []
 
 # ---------------------------------------------------------------------------
 # Config
@@ -160,7 +170,10 @@ def _get_instructions() -> str:
 
 def _build_processors() -> list:
     """Instantiate the vision processors for the current mode."""
-    global _active_ocr_processor
+    global _active_ocr_processor, _active_processor_refs
+
+    # Clear previous refs
+    _active_processor_refs = []
 
     # OCR processor runs in both modes (captures frames for on-demand VLM)
     ocr = OCRProcessor(
@@ -173,16 +186,15 @@ def _build_processors() -> list:
 
     if AGENT_MODE == "signbridge":
         logger.info("Building SignBridge processor (YOLO Pose + OCR)")
-        return [
-            SignBridgeProcessor(
-                fps=10,
-                conf_threshold=0.5,
-                model_path="yolo11n-pose.pt",
-                device="cpu",
-                gesture_buffer_frames=30,
-            ),
-            ocr,
-        ]
+        signbridge = SignBridgeProcessor(
+            fps=10,
+            conf_threshold=0.5,
+            model_path="yolo11n-pose.pt",
+            device="cpu",
+            gesture_buffer_frames=30,
+        )
+        _active_processor_refs = [signbridge]
+        return [signbridge, ocr]
     else:
         logger.info("Building GuideLens processor (YOLO Detection + OCR)")
         guidelens = GuideLensProcessor(
@@ -195,6 +207,7 @@ def _build_processors() -> list:
         # Day 4: Wire spatial memory and navigation engine
         guidelens.set_spatial_memory(spatial_memory)
         guidelens.set_navigation_engine(navigation_engine)
+        _active_processor_refs = [guidelens]
         return [guidelens, ocr]
 
 
@@ -520,33 +533,132 @@ async def create_agent(**kwargs) -> Agent:
             },
         }
 
-    # --- MCP Tool: Haptic Alert (Day 4) -----------------------------------
+    # --- MCP Tool: Haptic Alert (Day 5 — Enhanced) -------------------------
     @agent.llm.register_function(
         name="trigger_haptic_alert",
         description=(
-            "Trigger a haptic/visual alert on the user's device when an "
+            "Trigger a haptic/visual/audio alert on the user's device when an "
             "object is rapidly approaching or an immediate hazard is detected. "
             "Use sparingly — only for genuinely dangerous situations like "
-            "a vehicle approaching or walking into an obstacle."
+            "a vehicle approaching, walking into an obstacle, or sudden danger. "
+            "Parameters:\n"
+            "  reason: Short description of the danger (e.g. 'Car approaching quickly from the left')\n"
+            "  severity: 'critical' (imminent collision), 'warning' (approaching hazard), or 'caution' (be aware)\n"
+            "  direction: 'left', 'center', or 'right' relative to user\n"
         ),
     )
-    async def trigger_haptic_alert(reason: str) -> dict:
-        logger.warning("HAPTIC ALERT triggered: %s", reason)
-        # Store the alert for the frontend to pick up
-        navigation_engine._hazard_alerts.append({
+    async def trigger_haptic_alert(
+        reason: str,
+        severity: str = "warning",
+        direction: str = "center",
+    ) -> dict:
+        if severity not in ("critical", "warning", "caution"):
+            severity = "warning"
+        if direction not in ("left", "center", "right"):
+            direction = "center"
+
+        # Map severity to priority and sound type
+        severity_map = {
+            "critical": {"priority": 0, "sound": "siren", "duration_ms": 3000},
+            "warning":  {"priority": 1, "sound": "beep",  "duration_ms": 2000},
+            "caution":  {"priority": 2, "sound": "chime", "duration_ms": 1500},
+        }
+        meta = severity_map[severity]
+
+        logger.warning(
+            "🚨 HAPTIC ALERT [%s] dir=%s: %s", severity.upper(), direction, reason
+        )
+
+        alert_entry = {
             "text": reason,
-            "priority": 0,
+            "priority": meta["priority"],
+            "severity": severity,
             "type": "haptic_alert",
             "class": "agent_triggered",
+            "direction": direction,
+            "sound": meta["sound"],
+            "duration_ms": meta["duration_ms"],
             "timestamp": time.time(),
-        })
+        }
+        navigation_engine._hazard_alerts.append(alert_entry)
+
         return {
             "status": "ok",
             "message": f"Haptic alert triggered: {reason}",
+            "severity": severity,
+            "direction": direction,
         }
 
+    # --- MCP Tool: Time & Date (Day 5) ------------------------------------
+    @agent.llm.register_function(
+        name="get_time_and_date",
+        description=(
+            "Get the current local time, date, and day of the week. "
+            "Use when the user asks 'What time is it?', 'What day is today?', "
+            "or needs time-related information."
+        ),
+    )
+    async def mcp_get_time() -> dict:
+        logger.info("MCP tool: get_time_and_date()")
+        return await _smart_get_time()
+
+    # --- MCP Tool: Weather (Day 5) ----------------------------------------
+    @agent.llm.register_function(
+        name="get_weather",
+        description=(
+            "Get current weather conditions for a location. Includes "
+            "temperature, humidity, wind speed, and conditions. "
+            "Use when the user asks about weather, temperature, or if "
+            "they should bring an umbrella."
+        ),
+    )
+    async def mcp_get_weather(location: str = "") -> dict:
+        logger.info("MCP tool: get_weather('%s')", location)
+        return await _smart_get_weather(location)
+
+    # --- MCP Tool: Color Identification (Day 5) ---------------------------
+    @agent.llm.register_function(
+        name="identify_colors",
+        description=(
+            "Identify and describe colors of objects visible in the camera. "
+            "Use when the user asks 'What color is that car?', 'What color "
+            "is this shirt?', or needs color-related help for accessibility."
+        ),
+    )
+    async def mcp_identify_colors() -> dict:
+        logger.info("MCP tool: identify_colors()")
+        return await _smart_identify_color()
+
+    # --- MCP Tool: Emergency Alert (Day 5) --------------------------------
+    @agent.llm.register_function(
+        name="emergency_alert",
+        description=(
+            "Trigger an emergency alert when the user is in danger or "
+            "requests urgent help. Logs the emergency and in production "
+            "would notify emergency contacts with GPS location. "
+            "Use only for genuine emergencies — user says 'help', 'emergency', "
+            "or appears to be in a dangerous situation."
+        ),
+    )
+    async def mcp_emergency(reason: str, severity: str = "high") -> dict:
+        logger.critical("MCP tool: emergency_alert('%s', '%s')", reason, severity)
+        return await _smart_emergency(reason, severity)
+
+    # --- MCP Tool: Device Status (Day 5) ----------------------------------
+    @agent.llm.register_function(
+        name="get_device_status",
+        description=(
+            "Check the device status including battery level, camera/mic "
+            "status, and system uptime. Use when the user asks about "
+            "battery, device health, or system status."
+        ),
+    )
+    async def mcp_device_status() -> dict:
+        logger.info("MCP tool: get_device_status()")
+        return await _smart_device_status()
+
     logger.info(
-        "Agent created in [%s] mode with %d processor(s)",
+        "Agent created in [%s] mode with %d processor(s) and 12 MCP tools",
         AGENT_MODE.upper(),
         len(processors),
     )
@@ -788,9 +900,15 @@ if __name__ == "__main__":
         return {"summary": navigation_engine.get_environment_summary()}
 
     @runner.fast_api.get("/navigation/hazards")
-    async def nav_hazards():
-        """Get list of active hazard alerts."""
-        return {"hazards": navigation_engine.get_hazard_alerts()}
+    async def nav_hazards(since: float = 0):
+        """Get list of active hazard alerts, optionally since a timestamp."""
+        return {"hazards": navigation_engine.get_hazard_alerts(since=since)}
+
+    @runner.fast_api.get("/navigation/hazards/poll")
+    async def nav_hazards_poll(since: float = 0):
+        """Poll and consume hazard alerts (marks them as read)."""
+        alerts = navigation_engine.pop_hazard_alerts(since=since)
+        return {"hazards": alerts, "count": len(alerts)}
 
     @runner.fast_api.post("/navigation/assistant")
     async def nav_assistant_toggle(activate: bool = Body(default=True)):
@@ -800,5 +918,133 @@ if __name__ == "__main__":
         else:
             navigation_engine.deactivate_assistant()
         return {"assistant_mode": activate}
+
+    # ------------------------------------------------------------------
+    # Day 5: Smart Tools API endpoints
+    # ------------------------------------------------------------------
+
+    @runner.fast_api.get("/time")
+    async def api_get_time():
+        """Get current time and date."""
+        return await _smart_get_time()
+
+    @runner.fast_api.get("/weather")
+    async def api_get_weather(location: str = ""):
+        """Get weather for a location."""
+        return await _smart_get_weather(location)
+
+    @runner.fast_api.get("/device-status")
+    async def api_device_status():
+        """Get device status info."""
+        return await _smart_device_status()
+
+    @runner.fast_api.get("/emergencies")
+    def api_get_emergencies():
+        """Get emergency alert log."""
+        return {"emergencies": get_emergency_log()}
+
+    @runner.fast_api.post("/emergency")
+    async def api_trigger_emergency(reason: str = Body(default="User triggered"), severity: str = Body(default="high")):
+        """Manually trigger an emergency alert."""
+        return await _smart_emergency(reason, severity)
+
+    # ------------------------------------------------------------------
+    # Day 5: Real Telemetry Metrics Endpoint
+    # ------------------------------------------------------------------
+
+    # Module-level telemetry state — tracks session-level metrics
+    _telemetry_start = time.time()
+    _session_count = 0
+
+    @runner.fast_api.get("/telemetry")
+    async def get_telemetry():
+        """
+        Real telemetry metrics aggregated from all active processors,
+        providers, spatial memory, and navigation engine.
+        """
+        # --- Processor metrics ---
+        processor_metrics = []
+        if _active_ocr_processor and hasattr(_active_ocr_processor, "get_telemetry"):
+            processor_metrics.append(_active_ocr_processor.get_telemetry())
+
+        # We need to inspect the current agent's processors.
+        # The processors are created per-session in _build_processors(), and
+        # we don't have a direct reference to the GuideLens/SignBridge instance
+        # from here. But we can store them at creation time.
+        for proc_ref in _active_processor_refs:
+            if hasattr(proc_ref, "get_telemetry"):
+                processor_metrics.append(proc_ref.get_telemetry())
+
+        # --- Provider metrics ---
+        provider_status = provider_manager.get_status()
+
+        # --- Memory metrics ---
+        try:
+            mem_summary = await spatial_memory.get_summary()
+        except Exception:
+            mem_summary = {}
+
+        # --- Navigation metrics ---
+        nav_summary_text = navigation_engine.get_environment_summary()
+        hazard_count = len(navigation_engine.get_hazard_alerts())
+
+        # --- Aggregate ---
+        total_frames = sum(
+            p.get("frames_processed", 0) for p in processor_metrics
+        )
+        avg_inference = 0.0
+        inference_procs = [
+            p for p in processor_metrics
+            if p.get("avg_inference_ms", 0) > 0
+        ]
+        if inference_procs:
+            avg_inference = sum(
+                p["avg_inference_ms"] for p in inference_procs
+            ) / len(inference_procs)
+
+        return {
+            "mode": AGENT_MODE,
+            "uptime_seconds": round(time.time() - _telemetry_start, 1),
+            "processors": processor_metrics,
+            "processor_count": len(processor_metrics),
+            "aggregate": {
+                "total_frames_processed": total_frames,
+                "avg_inference_ms": round(avg_inference, 1),
+                "total_objects_detected": sum(
+                    p.get("total_objects_detected", 0) for p in processor_metrics
+                ),
+                "total_hazards_detected": sum(
+                    p.get("total_hazards_detected", 0) for p in processor_metrics
+                ),
+                "total_gestures_detected": sum(
+                    p.get("total_gestures_detected", 0) for p in processor_metrics
+                ),
+                "total_ocr_calls": sum(
+                    p.get("total_ocr_calls", 0) for p in processor_metrics
+                ),
+            },
+            "providers": {
+                "preferred": provider_status.get("preferred", ""),
+                "chain": provider_status.get("fallback_chain", []),
+                "stats": {
+                    pid: {
+                        "calls": info.get("total_calls", 0),
+                        "errors": info.get("total_errors", 0),
+                        "available": info.get("available", False),
+                    }
+                    for pid, info in provider_status.get("providers", {}).items()
+                },
+            },
+            "memory": {
+                "total_detections": mem_summary.get("total_detections", 0),
+                "unique_objects": mem_summary.get("unique_objects", 0),
+                "recent_5min": mem_summary.get("recent_5min", 0),
+            },
+            "navigation": {
+                "mode": navigation_engine.mode,
+                "scene_summary": nav_summary_text,
+                "pending_hazards": hazard_count,
+            },
+        }
 
     runner.cli()

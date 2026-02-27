@@ -977,3 +977,200 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+/* ============================================================
+   Day 5: Alert Overlay V2 — Enhanced with severity, direction,
+   pulsing borders, and card animations
+   ============================================================ */
+
+.alert-overlay-v2 {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 200;
+  pointer-events: none;
+  animation: alert-v2-fade-in 0.15s ease-out;
+}
+
+@keyframes alert-v2-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Directional border glow */
+.alert-border-glow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  animation: alert-v2-pulse var(--alert-pulse-speed, 0.6s) ease-in-out infinite alternate;
+}
+
+.alert-dir-left {
+  border-left: 8px solid var(--alert-border-color, #ef4444);
+  box-shadow: inset 80px 0 60px -40px var(--alert-bg-color, rgba(239,68,68,0.15));
+}
+
+.alert-dir-right {
+  border-right: 8px solid var(--alert-border-color, #ef4444);
+  box-shadow: inset -80px 0 60px -40px var(--alert-bg-color, rgba(239,68,68,0.15));
+}
+
+.alert-dir-center {
+  border: 5px solid var(--alert-border-color, #ef4444);
+  box-shadow: inset 0 0 80px -20px var(--alert-bg-color, rgba(239,68,68,0.15));
+}
+
+@keyframes alert-v2-pulse {
+  from { opacity: 0.5; }
+  to   { opacity: 1; }
+}
+
+/* Alert card */
+.alert-card {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  animation: alert-card-pop 0.25s ease-out;
+}
+
+@keyframes alert-card-pop {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+.alert-card-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1.25rem 2.5rem;
+  background: #0a0a0fee;
+  backdrop-filter: blur(16px);
+  border-radius: 16px;
+  border: 2px solid var(--alert-border-color, #ef4444);
+  box-shadow: 0 8px 40px var(--alert-glow, #ef444466), 0 0 60px var(--alert-glow, #ef444433);
+  min-width: 260px;
+  max-width: 420px;
+}
+
+/* Severity-specific card styles */
+.alert-severity-critical .alert-card-inner {
+  border-width: 3px;
+  animation: alert-critical-shake 0.3s ease-in-out;
+}
+
+@keyframes alert-critical-shake {
+  0%, 100% { transform: translateX(0); }
+  20%  { transform: translateX(-6px); }
+  40%  { transform: translateX(6px); }
+  60%  { transform: translateX(-4px); }
+  80%  { transform: translateX(4px); }
+}
+
+.alert-severity-warning .alert-card-inner {
+  border-color: #f59e0b;
+}
+
+.alert-severity-caution .alert-card-inner {
+  border-color: #3b82f6;
+  box-shadow: 0 4px 24px #3b82f633;
+}
+
+/* Direction arrow */
+.alert-direction-arrow {
+  font-size: 2rem;
+  line-height: 1;
+  filter: drop-shadow(0 0 8px var(--alert-glow, #ef4444));
+}
+
+/* Severity badge */
+.alert-severity-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.alert-icon-v2 {
+  font-size: 1.5rem;
+}
+
+.alert-severity-label {
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--alert-border-color, #ef4444);
+}
+
+/* Message */
+.alert-message-v2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #f0f0f0;
+  text-align: center;
+  line-height: 1.4;
+}
+
+/* Distance tag */
+.alert-distance-tag {
+  font-size: 0.75rem;
+  color: #999;
+  padding: 0.15rem 0.6rem;
+  background: #1e1e2e;
+  border-radius: 10px;
+  border: 1px solid #2e2e3e;
+}
+
+/* ============================================================
+   Day 5: Enhanced Telemetry Panel — Enterprise style
+   ============================================================ */
+
+.telemetry-panel h3 .telemetry-live-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background: #22c55e;
+  border-radius: 50%;
+  margin-left: 0.5rem;
+  animation: telemetry-dot-pulse 1.5s ease-in-out infinite;
+  vertical-align: middle;
+}
+
+@keyframes telemetry-dot-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 4px #22c55e; }
+  50%      { opacity: 0.4; box-shadow: none; }
+}
+
+.telemetry-section-label {
+  font-size: 0.6rem;
+  color: #555;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.25rem 0.5rem 0.1rem;
+  grid-column: 1 / -1;
+  border-top: 1px solid #1a1a2a;
+  margin-top: 0.25rem;
+}
+
+.telemetry-item.highlight {
+  border-color: #22c55e44;
+  background: #0a140a;
+}
+
+.telemetry-item.warn {
+  border-color: #f59e0b44;
+  background: #140e0a;
+}
+
+.telemetry-value.good { color: #22c55e; }
+.telemetry-value.neutral { color: #3b82f6; }
+.telemetry-value.warn { color: #f59e0b; }
+.telemetry-value.bad { color: #ef4444; }
+

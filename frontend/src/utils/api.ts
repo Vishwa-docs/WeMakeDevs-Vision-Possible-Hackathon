@@ -225,4 +225,46 @@ export async function triggerSceneDescription(
   return res.json();
 }
 
+// ---------------------------------------------------------------------------
+// Telemetry (Day 5)
+// ---------------------------------------------------------------------------
+
+import type { TelemetryData, HazardAlert } from "../types";
+
+/** Fetch real-time telemetry from the backend */
+export async function getTelemetry(): Promise<TelemetryData | null> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/telemetry`);
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Hazard alert polling (Day 5)
+// ---------------------------------------------------------------------------
+
+export interface HazardPollResponse {
+  alerts: HazardAlert[];
+  since: number;
+  count: number;
+}
+
+/** Poll for new hazard alerts since a given timestamp (consumable) */
+export async function pollHazardAlerts(
+  since: number = 0
+): Promise<HazardPollResponse> {
+  try {
+    const res = await fetch(
+      `${BACKEND_URL}/navigation/hazards/poll?since=${since}`
+    );
+    if (!res.ok) return { alerts: [], since, count: 0 };
+    return res.json();
+  } catch {
+    return { alerts: [], since, count: 0 };
+  }
+}
+
 export { STREAM_API_KEY, BACKEND_URL };
