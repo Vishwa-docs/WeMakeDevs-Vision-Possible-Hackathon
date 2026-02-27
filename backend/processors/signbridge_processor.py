@@ -1,22 +1,26 @@
 """
-SignBridge Processor — YOLO Pose Estimation for Sign Language
-==============================================================
-Day 2: Full implementation with YOLOv11 Pose + skeletal extraction +
-gesture buffering + HuggingFace NLP translation stub.
+SignBridge Processor — YOLO Pose + MediaPipe Hands for Sign Language
+=====================================================================
+Day 2+5: Full implementation with YOLOv11 Pose + Google MediaPipe Hand
+Landmarks + skeletal extraction + gesture buffering + HuggingFace NLP.
 
 Architecture:
-  Video Frame → YOLO Pose → 17 Keypoints → Gesture Buffer → Event Emission
-                     ↓
-              Skeleton Overlay → Published Video Track
+  Video Frame → YOLO Pose → 17 Body Keypoints → Gesture Buffer → Event Emission
+       ↓
+  MediaPipe Hands → 21 Hand Keypoints × 2 → Finger State → ASL Letter
+       ↓
+  Combined Skeleton + Hand Overlay → Published Video Track
 
 Features:
-  - Extracts 17 COCO skeletal keypoints per person
-  - Draws upper-body focused skeleton overlay (sign language relevant)
-  - Highlights wrists (primary sign language articulators)
-  - Buffers gesture sequences for temporal motion analysis
-  - Classifies basic gestures from wrist trajectory patterns
-  - Emits structured events (SignDetectedEvent, GestureBufferEvent, SignTranslationEvent)
-  - Optional HuggingFace NLP for gloss → fluent English translation
+  - Extracts 17 COCO skeletal keypoints per person (YOLO Pose)
+  - Extracts 21 hand landmarks per hand with finger state analysis (MediaPipe)
+  - Draws upper-body focused skeleton overlay with wrist highlights
+  - Highlights individual fingertips (green=extended, red=curled)
+  - Basic ASL finger-spelling recognition (A, B, D, I, L, V, W, Y, S, 5)
+  - `GestureBuffer` with temporal motion analysis (30-frame window)
+  - Rule-based gesture classifier (WAVE, RAISE-HAND, POINT, ACTIVE-SIGN)
+  - `GlossTranslator` with optional HuggingFace Inference API
+  - Emits structured events with hand landmark + finger state data
 """
 
 import asyncio
@@ -36,6 +40,8 @@ from vision_agents.core.events import BaseEvent
 from vision_agents.core.processors import VideoProcessorPublisher
 from vision_agents.core.utils.video_forwarder import VideoForwarder
 from vision_agents.core.utils.video_track import QueuedVideoTrack
+
+from processors.mediapipe_hands import MediaPipeHandLandmarker
 
 logger = logging.getLogger("signbridge.processor")
 
@@ -84,6 +90,10 @@ class SignDetectedEvent(BaseEvent):
     confidence: float = 0.0
     frame_number: int = 0
     timestamp_unix: float = 0.0
+    # Day 5: MediaPipe hand landmarks
+    num_hands: int = 0
+    finger_states: list = field(default_factory=list)  # per-hand finger state dicts
+    asl_letters: list = field(default_factory=list)  # per-hand detected ASL letters
 
 
 @dataclass
@@ -276,6 +286,7 @@ class SignBridgeProcessor(VideoProcessorPublisher):
         model_path: str = "yolo11n-pose.pt",
         device: str = "cpu",
         gesture_buffer_frames: int = 30,
+        enable_mediapipe_hands: bool = True,
     ):
         self.fps = fps
         self.conf_threshold = conf_threshold
@@ -294,6 +305,33 @@ class SignBridgeProcessor(VideoProcessorPublisher):
         self._agent = None
         self._events = None
         self._processing = False  # inference mutex
+
+        # Day 5: MediaPipe Hand Landmarker (21 keypoints per hand)
+        self._hand_landmarker: Optional[MediaPipeHandLandmarker] = None
+        if enable_mediapipe_hands:
+            try:
+                self._hand_landmarker = MediaPipeHandLandmarker(
+                    max_num_hands=2,
+                    min_detection_confidence=0.5,
+                    min_tracking_confidence=0.5,
+                )
+                if self._hand_landmarker.available:
+                    logger.info("MediaPipe Hand Landmarker enabled for SignBridge")
+                else:
+                    logger.warning("MediaPipe not available — running YOLO Pose only")
+                    self._hand_landmarker = None
+            except Exception as e:
+                logger.warning("MediaPipe init failed: %s — YOLO Pose only", e)
+                self._hand_landmarker = None
+
+        # Day 5: Telemetry metrics
+        self._total_gestures_detected = 0
+        self._total_persons_detected = 0
+        self._total_hands_detected = 0
+        self._total_asl_letters_detected = 0
+        self._total_inference_time = 0.0
+        self._inference_count = 0
+        self._start_time = time.time()
 
         # Load YOLO model
         self._load_model()
@@ -327,6 +365,32 @@ class SignBridgeProcessor(VideoProcessorPublisher):
         self._events.register(GestureBufferEvent)
         self._events.register(SignTranslationEvent)
         logger.info("SignBridgeProcessor attached to agent")
+
+    def get_telemetry(self) -> dict:
+        """Return real-time telemetry metrics for the /telemetry endpoint."""
+        avg_inference = (
+            (self._total_inference_time / self._inference_count * 1000)
+            if self._inference_count > 0 else 0.0
+        )
+        telemetry = {
+            "processor": "signbridge_pose",
+            "model": self.model_path,
+            "device": self.device,
+            "target_fps": self.fps,
+            "frames_processed": self._frame_count,
+            "total_gestures_detected": self._total_gestures_detected,
+            "total_persons_detected": self._total_persons_detected,
+            "total_hands_detected": self._total_hands_detected,
+            "total_asl_letters_detected": self._total_asl_letters_detected,
+            "avg_inference_ms": round(avg_inference, 1),
+            "inference_count": self._inference_count,
+            "gesture_buffer_size": self._gesture_buffer.length,
+            "mediapipe_enabled": self._hand_landmarker is not None,
+            "uptime_seconds": round(time.time() - self._start_time, 1),
+        }
+        if self._hand_landmarker:
+            telemetry["mediapipe"] = self._hand_landmarker.get_telemetry()
+        return telemetry
 
     async def process_video(
         self,
@@ -369,19 +433,40 @@ class SignBridgeProcessor(VideoProcessorPublisher):
             img = frame.to_ndarray(format="rgb24")
 
             if self._model is not None:
+                t_inference_start = time.time()
                 annotated_img, all_keypoints = await self._run_pose_detection(img)
+                t_inference_end = time.time()
+                self._total_inference_time += (t_inference_end - t_inference_start)
+                self._inference_count += 1
+
+                # Day 5: Run MediaPipe hand detection on the same frame
+                hand_data = None
+                if self._hand_landmarker and self._hand_landmarker.available:
+                    hand_data = self._hand_landmarker.detect(annotated_img, draw=True)
+                    if hand_data.annotated_image is not None:
+                        annotated_img = hand_data.annotated_image
+                    self._total_hands_detected += hand_data.num_hands
+                    # Count ASL letters detected
+                    for hand in hand_data.hands:
+                        if hand.asl_letter:
+                            self._total_asl_letters_detected += 1
 
                 # Emit detection event
                 if all_keypoints and self._events:
-                    self._events.send(
-                        SignDetectedEvent(
-                            keypoints=all_keypoints,
-                            num_persons=len(all_keypoints),
-                            confidence=self._avg_confidence(all_keypoints),
-                            frame_number=self._frame_count,
-                            timestamp_unix=timestamp,
-                        )
+                    self._total_persons_detected += len(all_keypoints)
+                    event = SignDetectedEvent(
+                        keypoints=all_keypoints,
+                        num_persons=len(all_keypoints),
+                        confidence=self._avg_confidence(all_keypoints),
+                        frame_number=self._frame_count,
+                        timestamp_unix=timestamp,
                     )
+                    # Enrich with hand landmark data
+                    if hand_data and hand_data.num_hands > 0:
+                        event.num_hands = hand_data.num_hands
+                        event.finger_states = [h.finger_states for h in hand_data.hands]
+                        event.asl_letters = [h.asl_letter for h in hand_data.hands if h.asl_letter]
+                    self._events.send(event)
 
                 # Gesture buffering + classification
                 gesture_seq = self._gesture_buffer.add_frame(
@@ -389,6 +474,16 @@ class SignBridgeProcessor(VideoProcessorPublisher):
                 )
                 if gesture_seq and self._events:
                     raw_gloss = self._classify_gesture(gesture_seq)
+
+                    # Day 5: Enhance gloss with ASL letter from MediaPipe
+                    if hand_data and hand_data.num_hands > 0:
+                        asl_letters = [h.asl_letter for h in hand_data.hands if h.asl_letter]
+                        if asl_letters and not raw_gloss:
+                            raw_gloss = f"FINGERSPELL-{'-'.join(asl_letters)}"
+                        elif asl_letters:
+                            raw_gloss = f"{raw_gloss} [{','.join(asl_letters)}]"
+
+                    self._total_gestures_detected += 1
                     self._events.send(
                         GestureBufferEvent(
                             gesture_sequence=[],  # omit heavy data
@@ -588,6 +683,11 @@ class SignBridgeProcessor(VideoProcessorPublisher):
         await self.stop_processing()
         self._video_track.stop()
         self._gesture_buffer.clear()
+        if self._hand_landmarker:
+            self._hand_landmarker.close()
         logger.info(
-            "SignBridgeProcessor closed (total frames: %d)", self._frame_count
+            "SignBridgeProcessor closed (total frames: %d, hands: %d, asl_letters: %d)",
+            self._frame_count,
+            self._total_hands_detected,
+            self._total_asl_letters_detected,
         )

@@ -108,9 +108,26 @@ class OCRProcessor(VideoProcessor):
         # Provider manager reference — set by main.py after creation
         self._provider_manager = None
 
+        # Day 5: Telemetry metrics
+        self._total_ocr_calls = 0
+        self._total_scene_calls = 0
+        self._start_time = time.time()
+
     def set_provider_manager(self, pm: Any) -> None:
         """Inject the ProviderManager for VLM calls."""
         self._provider_manager = pm
+
+    def get_telemetry(self) -> dict:
+        """Return real-time telemetry metrics for the /telemetry endpoint."""
+        return {
+            "processor": "ocr_vlm",
+            "frames_captured": self._frame_count,
+            "total_ocr_calls": self._total_ocr_calls,
+            "total_scene_calls": self._total_scene_calls,
+            "cached_results": len(self._ocr_results),
+            "scan_interval_s": self.scan_interval,
+            "uptime_seconds": round(time.time() - self._start_time, 1),
+        }
 
     # ------------------------------------------------------------------
     # Agent lifecycle
@@ -199,6 +216,8 @@ class OCRProcessor(VideoProcessor):
             "If no text is visible, say 'No text detected'."
         )
 
+        self._total_ocr_calls += 1
+
         try:
             jpeg_bytes = self._frame_to_jpeg(img)
             caption, provider = await self._provider_manager.caption(
@@ -274,6 +293,8 @@ class OCRProcessor(VideoProcessor):
             "positions, any text or signage, potential obstacles, lighting "
             "conditions, and any notable features. Be thorough but concise."
         )
+
+        self._total_scene_calls += 1
 
         try:
             jpeg_bytes = self._frame_to_jpeg(img)

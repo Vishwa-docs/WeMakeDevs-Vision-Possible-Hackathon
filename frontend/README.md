@@ -1,73 +1,101 @@
-# React + TypeScript + Vite
+# WorldLens Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React 19 + TypeScript + Vite frontend for the WorldLens assistive vision platform.
 
-Currently, two official plugins are available:
+## Prerequisites
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **Node.js 18+** (recommended: 20 LTS)
+- **npm** (comes with Node.js)
+- Backend server running at `http://localhost:8000`
 
-## React Compiler
+## Quick Start
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```bash
+# 1. Install dependencies
+npm install
 
-## Expanding the ESLint configuration
+# 2. Copy and configure environment
+cp .env.example .env
+# Edit .env — at minimum set VITE_STREAM_API_KEY
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+# 3. Start development server
+npm run dev
+# Opens at http://localhost:5173
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Environment Variables
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+| Variable | Required | Description | Where to Get |
+|----------|----------|-------------|--------------|
+| `VITE_STREAM_API_KEY` | ✅ | GetStream API key (same as backend `STREAM_API_KEY`) | [getstream.io/dashboard](https://getstream.io/dashboard/) |
+| `VITE_BACKEND_URL` | ✅ | Backend server URL | Default: `http://localhost:8000` |
+| `VITE_AVATAR_URL` | Optional | Ready Player Me `.glb` avatar URL | [readyplayer.me](https://readyplayer.me/) — see below |
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+### Custom 3D Avatar Setup
+
+1. Go to [readyplayer.me](https://readyplayer.me/) and create an account
+2. Create/customize your avatar
+3. Copy the `.glb` URL from your avatar page
+4. Append morph targets for lip-sync:
+   ```
+   ?morphTargets=viseme_aa,viseme_E,viseme_I,viseme_O,viseme_U,viseme_PP,viseme_FF,jawOpen&textureAtlas=1024
+   ```
+5. Set `VITE_AVATAR_URL` in your `.env` to the full URL
+
+If left empty, a default avatar is used.
+
+## Project Structure
+
 ```
+src/
+├── App.tsx              # Main app — session management, polling, layout
+├── App.css              # Dark theme styling
+├── main.tsx             # React entry point
+├── components/
+│   ├── VideoRoom.tsx    # Stream Video SDK — WebRTC call
+│   ├── StatusBar.tsx    # Connection status + mode toggle
+│   ├── ChatLog.tsx      # Conversation transcript history
+│   ├── TelemetryPanel.tsx  # Real-time metrics dashboard
+│   ├── AlertOverlay.tsx    # Hazard warnings (audio + visual + haptic)
+│   ├── Avatar3D/           # 3D avatar lip-sync (React Three Fiber)
+│   ├── OCROverlay.tsx      # Text detection overlay on video
+│   ├── ProviderSelector.tsx # VLM provider management
+│   └── Toast.tsx           # Toast notification system
+├── hooks/
+│   └── useAgentSession.ts  # Session lifecycle hook
+├── types/
+│   └── index.ts            # TypeScript interfaces
+└── utils/
+    └── api.ts              # Backend API client
+```
+
+## Key Features
+
+- **WebRTC Video/Audio** via Stream Video React SDK
+- **3D Avatar** with lip-sync morph targets (React Three Fiber + Ready Player Me)
+- **Hazard Alert Overlay** with severity levels, directional glow, Web Audio chimes
+- **Real-time Telemetry** — inference latency, object counts, provider chain status
+- **OCR Text Overlay** — detected text displayed over video feed
+- **Multi-VLM Provider Panel** — switch providers, see fallback events
+- **Dark theme UI** with responsive layout
+
+## Available Scripts
+
+```bash
+npm run dev        # Start dev server with HMR
+npm run build      # Production build to dist/
+npm run preview    # Preview production build
+npm run lint       # Run ESLint
+```
+
+## Tech Stack
+
+| Library | Version | Purpose |
+|---------|---------|---------|
+| React | 19 | UI framework |
+| Vite | 7 | Build tool |
+| TypeScript | 5.9 | Type safety |
+| `@stream-io/video-react-sdk` | Latest | WebRTC video calls |
+| `@react-three/fiber` | Latest | Three.js React bindings |
+| `@react-three/drei` | Latest | Three.js helpers |
+| `three` | Latest | 3D rendering engine |

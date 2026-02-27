@@ -402,6 +402,21 @@ class NavigationEngine:
             return [a for a in self._hazard_alerts if a.get("timestamp", 0) > since]
         return list(self._hazard_alerts)
 
+    def pop_hazard_alerts(self, since: float = 0) -> list[dict]:
+        """Get and clear hazard alerts since timestamp (consumed by frontend)."""
+        if since > 0:
+            alerts = [a for a in self._hazard_alerts if a.get("timestamp", 0) > since]
+        else:
+            alerts = list(self._hazard_alerts)
+        # Remove returned alerts
+        if alerts:
+            returned_ts = {a.get("timestamp", 0) for a in alerts}
+            self._hazard_alerts = [
+                a for a in self._hazard_alerts
+                if a.get("timestamp", 0) not in returned_ts
+            ]
+        return alerts
+
     def clear_hazard_alerts(self) -> None:
         self._hazard_alerts.clear()
 

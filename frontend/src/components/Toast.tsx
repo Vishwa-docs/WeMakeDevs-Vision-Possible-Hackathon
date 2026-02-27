@@ -44,13 +44,13 @@ function Toast({
   }, [item, onDismiss]);
 
   return (
-    <div className={`toast toast-${item.type} ${exiting ? "toast-exit" : ""}`}>
+    <div className={`toast ${item.type} ${exiting ? "exit" : ""}`}>
       <span className="toast-icon">
         {item.type === "warning" ? "⚠️" : item.type === "error" ? "❌" : "ℹ️"}
       </span>
       <span className="toast-message">{item.message}</span>
       <button
-        className="toast-close"
+        className="toast-dismiss"
         onClick={() => onDismiss(item.id)}
         aria-label="Dismiss"
       >

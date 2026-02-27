@@ -10,11 +10,17 @@ python-dotenv>=1.0.0
 # OpenCV for camera/video handling (headless avoids libavdevice conflict with av/PyAV)
 opencv-python-headless>=4.8.0
 
+# Google MediaPipe — hand landmark detection for SignBridge
+mediapipe>=0.10.20
+
 # Database
 aiosqlite>=0.19.0
 
 # HTTP client (for Maps API, etc.)
 httpx>=0.25.0
+
+# Async HTTP client (for weather API)
+aiohttp>=3.9.0
 
 # Logging and utilities
 structlog>=23.0.0

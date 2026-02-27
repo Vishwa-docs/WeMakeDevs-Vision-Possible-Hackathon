@@ -14,8 +14,8 @@ import { ProviderSelector } from "./components/ProviderSelector";
 import { Avatar3D } from "./components/Avatar3D";
 import { OCROverlay } from "./components/OCROverlay";
 import { ToastContainer, useToasts } from "./components/Toast";
-import { getTranscript, clearTranscript } from "./utils/api";
-import type { TranscriptEntry, TelemetryData } from "./types";
+import { getTranscript, clearTranscript, getTelemetry, pollHazardAlerts } from "./utils/api";
+import type { TranscriptEntry, TelemetryData, HazardAlert } from "./types";
 import type { FallbackEvent } from "./utils/api";
 import "./App.css";
 
@@ -47,7 +47,32 @@ function App() {
   const [callId, setCallId] = useState(`worldlens-${Date.now()}`);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const lastTranscriptTs = React.useRef(0);
-  const alertActive = false; // placeholder — will become useState once hazard events are wired up
+
+  // Day 5: Hazard alert state (replaces old placeholder)
+  const [alertActive, setAlertActive] = useState(false);
+  const [currentAlert, setCurrentAlert] = useState<HazardAlert | null>(null);
+  const lastHazardTs = useRef(0);
+  const alertDeactivateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Day 5: Real telemetry from backend
+  const [telemetry, setTelemetry] = useState<TelemetryData>({
+    mode: status.mode,
+    uptime_seconds: 0,
+    processors: [],
+    processor_count: 0,
+    aggregate: {
+      total_frames_processed: 0,
+      avg_inference_ms: 0,
+      total_objects_detected: 0,
+      total_hazards_detected: 0,
+      total_gestures_detected: 0,
+      total_ocr_calls: 0,
+    },
+    providers: { preferred: "gemini", chain: [], stats: {} },
+    memory: { total_detections: 0, unique_objects: 0, recent_5min: 0 },
+    navigation: { mode: "idle", scene_summary: "", pending_hazards: 0 },
+  });
+
   const [startTime] = useState(Date.now());
   const [uptime, setUptime] = useState(0);
   const [agentSpeaking, setAgentSpeaking] = useState(false);
@@ -123,6 +148,55 @@ function App() {
     };
   }, [session]);
 
+  // Day 5: Poll backend for hazard alerts while session is active
+  useEffect(() => {
+    if (!session) return;
+    const interval = setInterval(async () => {
+      const data = await pollHazardAlerts(lastHazardTs.current);
+      if (data.alerts && data.alerts.length > 0) {
+        // Show the highest-priority (first) alert
+        const top = data.alerts[0];
+        setCurrentAlert({
+          type: top.type || "hazard",
+          text: top.text || top.type || "Obstacle detected",
+          severity: top.severity || "warning",
+          direction: top.direction || "center",
+          sound: top.sound,
+          duration_ms: top.duration_ms,
+          priority: top.priority,
+          timestamp: top.timestamp || Date.now(),
+          distance: top.distance,
+          growth_rate: top.growth_rate,
+        });
+        setAlertActive(true);
+        lastHazardTs.current = Date.now();
+
+        // Auto-deactivate after alert duration so next alert can trigger
+        const dur = top.duration_ms || 3000;
+        if (alertDeactivateTimer.current) clearTimeout(alertDeactivateTimer.current);
+        alertDeactivateTimer.current = setTimeout(() => setAlertActive(false), dur + 200);
+      }
+    }, 2000);
+    return () => {
+      clearInterval(interval);
+      if (alertDeactivateTimer.current) clearTimeout(alertDeactivateTimer.current);
+    };
+  }, [session]);
+
+  // Day 5: Poll backend for real telemetry while session is active
+  useEffect(() => {
+    if (!session) return;
+    const interval = setInterval(async () => {
+      const data = await getTelemetry();
+      if (data) {
+        setTelemetry(data);
+      }
+    }, 3000);
+    // Fetch immediately on mount
+    getTelemetry().then((d) => d && setTelemetry(d));
+    return () => clearInterval(interval);
+  }, [session]);
+
   // Handle mode toggle
   const handleToggleMode = useCallback(async () => {
     const result = await toggleMode();
@@ -135,17 +209,11 @@ function App() {
     }
   }, [toggleMode, session]);
 
-  // Telemetry (Day 5: real metrics from backend)
-  const telemetry: TelemetryData = {
-    edgeLatency: 24,
-    activeVLM:
-      status.mode === "signbridge"
-        ? "YOLO-Pose + Gemini + OCR"
-        : "YOLO-Detect + Gemini + OCR",
-    fps: status.mode === "signbridge" ? 10 : 5,
-    processorCount: status.connected ? 2 : 0, // YOLO + OCR
-    uptime,
-  };
+  // Telemetry uptime fallback (if backend /telemetry not yet responding)
+  useEffect(() => {
+    if (telemetry.uptime_seconds > 0) return; // real data available
+    setTelemetry((prev) => ({ ...prev, uptime_seconds: uptime }));
+  }, [uptime, telemetry.uptime_seconds]);
 
   const handleStart = useCallback(async () => {
     const id = `worldlens-${Date.now()}`;
@@ -178,8 +246,13 @@ function App() {
 
   return (
     <div className="app">
-      {/* Alert overlay for hazard warnings */}
-      <AlertOverlay active={alertActive} message="Obstacle approaching!" />
+      {/* Alert overlay for hazard warnings (Day 5: real hazard alerts) */}
+      <AlertOverlay
+        active={alertActive}
+        alert={currentAlert}
+        message={currentAlert?.text || "Obstacle detected!"}
+        direction={currentAlert?.direction}
+      />
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
       {/* Header */}
@@ -211,19 +284,28 @@ function App() {
           /* Landing / connect screen */
           <div className="landing">
             <div className="landing-card">
-              <h2>Welcome to WorldLens</h2>
-              <p>
-                An advanced dual-mode assistive vision platform powered by the
-                Vision Agents SDK, Gemini 2.5 Flash Realtime, and GetStream Edge.
+              <div className="landing-hero-icon">🌍</div>
+              <h2>WorldLens</h2>
+              <p className="landing-subtitle">
+                AI-Powered Assistive Vision Platform
+              </p>
+              <p className="landing-desc">
+                Dual-mode assistive vision powered by Vision Agents SDK,
+                Gemini 2.5 Flash Realtime, and GetStream Edge.
               </p>
 
-              <div className="mode-indicator">
-                <span className="mode-label">Current Mode:</span>
-                <span className="mode-value">
-                  {status.mode === "signbridge"
-                    ? "🤟 SignBridge — Sign Language Translation"
-                    : "👁️ GuideLens — Environmental Awareness"}
-                </span>
+              {/* Mode cards */}
+              <div className="mode-cards">
+                <div className={`mode-card ${status.mode === "guidelens" ? "active" : ""}`}>
+                  <span className="mode-card-icon">👁️</span>
+                  <span className="mode-card-title">GuideLens</span>
+                  <span className="mode-card-desc">Environmental awareness, hazard detection, navigation</span>
+                </div>
+                <div className={`mode-card ${status.mode === "signbridge" ? "active" : ""}`}>
+                  <span className="mode-card-icon">🤟</span>
+                  <span className="mode-card-title">SignBridge</span>
+                  <span className="mode-card-desc">Sign language recognition, 3D avatar, translation</span>
+                </div>
               </div>
 
               <div className="status-check">
@@ -245,13 +327,28 @@ function App() {
                 onClick={handleStart}
                 disabled={loading}
               >
-                {loading ? "Connecting…" : "Start Session"}
+                {loading ? (
+                  <>
+                    <span className="btn-spinner" /> Connecting…
+                  </>
+                ) : (
+                  "Start Session"
+                )}
               </button>
 
               <p className="hint">
-                This will open your camera and microphone to connect with the
-                WorldLens AI agent.
+                Opens camera &amp; microphone to connect with WorldLens AI.
               </p>
+
+              {/* Feature badges */}
+              <div className="feature-badges">
+                <span className="feature-badge">🧠 Gemini 2.5 Flash</span>
+                <span className="feature-badge">📹 Real-time Video</span>
+                <span className="feature-badge">🗣️ Voice AI</span>
+                <span className="feature-badge">🗺️ Google Maps</span>
+                <span className="feature-badge">🔍 YOLO Detection</span>
+                <span className="feature-badge">✋ MediaPipe</span>
+              </div>
             </div>
           </div>
         ) : (
@@ -272,13 +369,14 @@ function App() {
               {status.mode === "signbridge" && (
                 <div className="avatar-panel sidebar-section">
                   <div className="avatar-panel-header">
-                    <span>SignBridge Avatar</span>
+                    <span>🤟 SignBridge Avatar</span>
                     <span
                       className={`speaking-indicator ${
                         agentSpeaking ? "active" : "silent"
                       }`}
                     >
-                      {agentSpeaking ? "Speaking..." : "Silent"}
+                      <span className="speaking-dot" />
+                      {agentSpeaking ? "Speaking" : "Silent"}
                     </span>
                   </div>
                   <Avatar3D
@@ -287,8 +385,22 @@ function App() {
                   />
                 </div>
               )}
-              <ChatLog entries={transcript} />
-              <TelemetryPanel data={telemetry} />
+              <div className="sidebar-section">
+                <div className="sidebar-section-header">
+                  <span>💬 Conversation</span>
+                  <span className="sidebar-section-badge">{transcript.length}</span>
+                </div>
+                <ChatLog entries={transcript} />
+              </div>
+              <div className="sidebar-section">
+                <div className="sidebar-section-header">
+                  <span>📊 Telemetry</span>
+                  <span className="telemetry-live-indicator">
+                    <span className="live-dot" /> LIVE
+                  </span>
+                </div>
+                <TelemetryPanel data={telemetry} />
+              </div>
             </aside>
           </div>
         )}

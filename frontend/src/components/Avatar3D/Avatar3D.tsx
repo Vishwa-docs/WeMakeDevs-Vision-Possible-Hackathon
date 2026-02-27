@@ -20,9 +20,11 @@ import * as THREE from "three";
 
 // ---------------------------------------------------------------------------
 // Default Ready Player Me avatar URL (half-body, with morph targets)
-// Users can override via the `avatarUrl` prop.
+// Users can override via the `avatarUrl` prop or VITE_AVATAR_URL env var.
+// To create your own: https://readyplayer.me → create avatar → copy .glb URL
 // ---------------------------------------------------------------------------
 const DEFAULT_AVATAR_URL =
+  import.meta.env.VITE_AVATAR_URL ||
   "https://models.readyplayer.me/6460d95f9ae3dc9f28c1f796.glb?morphTargets=viseme_aa,viseme_E,viseme_I,viseme_O,viseme_U,viseme_PP,viseme_FF,jawOpen&textureAtlas=1024";
 
 // ---------------------------------------------------------------------------
