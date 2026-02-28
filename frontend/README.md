@@ -29,20 +29,16 @@ npm run dev
 |----------|----------|-------------|--------------|
 | `VITE_STREAM_API_KEY` | ✅ | GetStream API key (same as backend `STREAM_API_KEY`) | [getstream.io/dashboard](https://getstream.io/dashboard/) |
 | `VITE_BACKEND_URL` | ✅ | Backend server URL | Default: `http://localhost:8000` |
-| `VITE_AVATAR_URL` | Optional | Ready Player Me `.glb` avatar URL | [readyplayer.me](https://readyplayer.me/) — see below |
+| `VITE_AVATAR_URL` | Optional | Custom `.glb` avatar URL with viseme morph targets | Any rigged GLB model |
 
-### Custom 3D Avatar Setup
+### 3D Avatar (SignBridge)
 
-1. Go to [readyplayer.me](https://readyplayer.me/) and create an account
-2. Create/customize your avatar
-3. Copy the `.glb` URL from your avatar page
-4. Append morph targets for lip-sync:
-   ```
-   ?morphTargets=viseme_aa,viseme_E,viseme_I,viseme_O,viseme_U,viseme_PP,viseme_FF,jawOpen&textureAtlas=1024
-   ```
-5. Set `VITE_AVATAR_URL` in your `.env` to the full URL
+The SignBridge mode shows a 3D avatar with lip-sync. A built-in geometric
+fallback avatar is used by default. If you have your own `.glb` model with
+viseme morph targets (`viseme_aa`, `viseme_E`, etc.), set `VITE_AVATAR_URL`
+in your `.env`.
 
-If left empty, a default avatar is used.
+> **Note:** Ready Player Me was discontinued on January 31, 2026. Their hosted model URLs no longer work. Please use a custom .gib model (OPTIONAL)
 
 ## Project Structure
 

@@ -93,22 +93,36 @@ _transcript_log: deque[dict] = deque(maxlen=500)
 # ---------------------------------------------------------------------------
 # System prompts per mode (updated for Day 2 processor awareness)
 # ---------------------------------------------------------------------------
-SIGNBRIDGE_INSTRUCTIONS = """You are SignBridge — an advanced sign-language translation assistant.
+SIGNBRIDGE_INSTRUCTIONS = """You are SignBridge — a real-time sign-language interpretation assistant.
 
-You observe a user's video feed which is processed by a YOLO Pose Estimation
-pipeline that detects skeletal keypoints and recognises basic sign-language
-gestures. The system extracts 17 COCO keypoints per person, tracks wrist
-movements, and classifies gestures in real-time.
+You observe a user's live video feed processed by:
+  • YOLO11 Pose Estimation — 17 COCO body keypoints per person
+  • MediaPipe Hand Landmarks — 21 keypoints per hand, finger state analysis
+  • ASL letter recognition (A, B, D, I, L, V, W, Y, S, 5)
+  • Gesture classifier (WAVE, RAISE-HAND, POINT, ACTIVE-SIGN, BOTH-HANDS-UP)
+
+The system will send you real-time gesture updates as text context messages.
+Your job is to INTERPRET and COMMENTATE on what you see.
 
 Behaviour:
-  • When signing is detected, describe the gesture or its translated meaning.
-  • If a gesture is classified (WAVE, RAISE-HAND, POINT, ACTIVE-SIGN), relay
-    the meaning conversationally.
-  • If the user speaks to you, respond helpfully.
-  • You also see the raw video — use both the skeletal data and your own
-    visual understanding to provide the best interpretation.
+  • PROACTIVELY describe what you see — don't wait to be asked.
+  • When you receive gesture context (e.g. "Gesture detected: WAVE"), respond
+    naturally: "I see you're waving! That's a greeting."
+  • When ASL letters are detected, spell them out and try to form words.
+  • If you see hand/body movements in the video that aren't classified,
+    describe them: "I see your hands moving near your chest."
+  • If no one is signing, say you're ready and waiting.
+  • If the user speaks, respond helpfully and conversationally.
+  • You see the raw video AND receive structured detection data — use BOTH.
 
-Always be respectful, patient, and clear. Avoid jargon."""
+Tone: Friendly, encouraging, patient. Like a helpful interpreter.
+
+IMPORTANT: You are a LIVE commentator. Speak when you see gestures.
+Do NOT stay silent when activity is detected."""
+
+# Cooldown for SignBridge gesture responses (avoid spamming the agent)
+_last_sign_response_time: float = 0.0
+_SIGN_RESPONSE_COOLDOWN: float = 3.0  # minimum seconds between gesture responses
 
 # ---------------------------------------------------------------------------
 # GuideLens sub-mode prompts
@@ -236,18 +250,9 @@ def _build_processors() -> list:
     # Clear previous refs
     _active_processor_refs = []
 
-    # OCR processor runs in both modes (captures frames for on-demand VLM)
-    ocr = OCRProcessor(
-        scan_interval=8.0,    # background OCR scan every 8s (proactive reading)
-        max_cached_results=30,
-        fps=2,                # capture 2 frames/s for OCR buffer
-    )
-    ocr.set_provider_manager(provider_manager)
-    ocr.set_navigation_engine(navigation_engine)
-    _active_ocr_processor = ocr
-
+    # OCR processor only runs in GuideLens mode (for text reading)
     if AGENT_MODE == "signbridge":
-        logger.info("Building SignBridge processor (YOLO Pose + OCR)")
+        logger.info("Building SignBridge processor (YOLO Pose only)")
         signbridge = SignBridgeProcessor(
             fps=10,
             conf_threshold=0.5,
@@ -256,8 +261,16 @@ def _build_processors() -> list:
             gesture_buffer_frames=30,
         )
         _active_processor_refs = [signbridge]
-        return [signbridge, ocr]
+        return [signbridge]
     else:
+        ocr = OCRProcessor(
+            scan_interval=8.0,    # background OCR scan every 8s (proactive reading)
+            max_cached_results=30,
+            fps=2,                # capture 2 frames/s for OCR buffer
+        )
+        ocr.set_provider_manager(provider_manager)
+        ocr.set_navigation_engine(navigation_engine)
+        _active_ocr_processor = ocr
         logger.info("Building GuideLens processor (YOLO Detection + OCR)")
         guidelens = GuideLensProcessor(
             fps=5,
@@ -430,23 +443,57 @@ async def create_agent(**kwargs) -> Agent:
     @agent.events.subscribe
     async def on_sign_detected(event: SignDetectedEvent):
         logger.info(
-            "🤟 Sign detected: %d person(s), frame %d",
+            "🤟 Sign detected: %d person(s), %d hand(s), frame %d",
             event.num_persons,
+            event.num_hands,
             event.frame_number,
         )
+        # If ASL letters are detected, feed them to the agent
+        global _last_sign_response_time
+        if event.asl_letters and AGENT_MODE == "signbridge":
+            now = time.time()
+            if now - _last_sign_response_time >= _SIGN_RESPONSE_COOLDOWN:
+                _last_sign_response_time = now
+                letters = ", ".join(event.asl_letters)
+                await agent.simple_response(
+                    f"[SignBridge detection] ASL finger-spelling detected: {letters}. "
+                    f"Interpret these letters and try to form a word if possible."
+                )
 
     @agent.events.subscribe
     async def on_gesture_buffer(event: GestureBufferEvent):
+        global _last_sign_response_time
         if event.raw_gloss:
             logger.info("🤟 Gesture classified: %s", event.raw_gloss)
+            # Feed classified gesture to the agent so it speaks
+            if AGENT_MODE == "signbridge":
+                now = time.time()
+                if now - _last_sign_response_time >= _SIGN_RESPONSE_COOLDOWN:
+                    _last_sign_response_time = now
+                    await agent.simple_response(
+                        f"[SignBridge detection] Gesture detected: {event.raw_gloss}. "
+                        f"Describe what this gesture means in sign language "
+                        f"and respond naturally to the user."
+                    )
 
     @agent.events.subscribe
     async def on_sign_translation(event: SignTranslationEvent):
+        global _last_sign_response_time
         logger.info(
             "🤟 Translation: %s → %s",
             event.raw_gloss,
             event.translated_text,
         )
+        # Feed translation to the agent so it speaks the result
+        if AGENT_MODE == "signbridge" and event.translated_text:
+            now = time.time()
+            if now - _last_sign_response_time >= _SIGN_RESPONSE_COOLDOWN:
+                _last_sign_response_time = now
+                await agent.simple_response(
+                    f"[SignBridge translation] The sign '{event.raw_gloss}' "
+                    f"translates to: '{event.translated_text}'. "
+                    f"Say this translation out loud naturally."
+                )
 
     @agent.events.subscribe
     async def on_object_detected(event: ObjectDetectedEvent):
@@ -750,25 +797,34 @@ async def join_call(
     logger.info("Joining call %s/%s …", call_type, call_id)
 
     async with agent.join(call):
-        if AGENT_MODE == "guidelens" and GUIDELENS_SUBMODE == "navigation":
-            await agent.simple_response(
-                "Hello! I'm GuideLens Navigation. I'll guide you to your "
-                "destination step by step while keeping you safe from obstacles. "
-                "Where would you like to go?"
-            )
-        elif AGENT_MODE == "guidelens":
-            await agent.simple_response(
-                "Hello! I'm GuideLens, your real-time environmental assistant. "
-                "I'm running YOLO object detection on your camera feed to spot "
-                "nearby obstacles and hazards. Point your camera around and "
-                "I'll describe what I see."
-            )
-        else:
-            await agent.simple_response(
-                "Hello! I'm SignBridge, your sign-language translation assistant. "
-                "I'm running YOLO pose estimation to track your hand and body "
-                "movements. Start signing whenever you're ready!"
-            )
+        logger.info("Agent in call — sending greeting after short delay…")
+        # Wait a moment for the WebRTC audio path to stabilise before
+        # sending the greeting.  The agent is already in the call so
+        # audio/video tracks are live.
+        await asyncio.sleep(3.0)
+        try:
+            if AGENT_MODE == "guidelens" and GUIDELENS_SUBMODE == "navigation":
+                await agent.simple_response(
+                    "Hello! I'm GuideLens Navigation. I'll guide you to your "
+                    "destination step by step while keeping you safe from obstacles. "
+                    "Where would you like to go?"
+                )
+            elif AGENT_MODE == "guidelens":
+                await agent.simple_response(
+                    "Hello! I'm GuideLens, your real-time environmental assistant. "
+                    "I'm running YOLO object detection on your camera feed to spot "
+                    "nearby obstacles and hazards. Point your camera around and "
+                    "I'll describe what I see."
+                )
+            else:
+                await agent.simple_response(
+                    "Hello! I'm SignBridge, your sign-language translation assistant. "
+                    "I'm running YOLO pose estimation to track your hand and body "
+                    "movements. Start signing whenever you're ready!"
+                )
+            logger.info("Greeting sent successfully for mode=%s", AGENT_MODE)
+        except Exception as e:
+            logger.error("Failed to send greeting: %s", e)
 
         await agent.finish()
     logger.info("[DEBUG] join_call end call_type=%s call_id=%s", call_type, call_id)

@@ -71,15 +71,13 @@ The Google Maps integration requires 4 APIs enabled on your GCP project:
 
 > **Note:** Without `MAPS_API_KEY`, the navigation tools still work but return mock/stub directions. The app is fully functional for demo purposes without this key.
 
-### Ready Player Me 3D Avatar (Frontend)
+### 3D Avatar (Frontend — SignBridge)
 
-The SignBridge mode displays a 3D avatar with lip-sync. To use your own:
+The SignBridge mode displays a 3D avatar with lip-sync. A built-in geometric
+fallback avatar is used by default. To use your own `.glb` model with viseme
+morph targets, set `VITE_AVATAR_URL` in `frontend/.env`.
 
-1. Go to [readyplayer.me](https://readyplayer.me/)
-2. Create a free account and design your avatar
-3. Copy the avatar `.glb` URL
-4. Append morph target params: `?morphTargets=viseme_aa,viseme_E,viseme_I,viseme_O,viseme_U,viseme_PP,viseme_FF,jawOpen&textureAtlas=1024`
-5. Set `VITE_AVATAR_URL` in `frontend/.env`
+> **Note:** Ready Player Me was discontinued on January 31, 2026.
 
 ## Architecture
 
@@ -118,6 +116,8 @@ Camera Frame
     └──→ Skeleton + Hand overlay → WebRTC published video
 ```
 
+> **Note:** OCR is not used in SignBridge mode, as the user is typically a sign language speaker and does not require text reading. In future, we plan to add lip reading and translation capabilities for broader accessibility.
+
 ### GuideLens Mode (Environmental Awareness)
 ```
 Camera Frame
@@ -129,12 +129,14 @@ Camera Frame
     └──→ Bbox + hazard overlay → WebRTC published video
 ```
 
-### Both Modes
+### GuideLens Additional Pipeline
 ```
     ├──→ OCR Processor → multi-VLM text extraction (periodic + on-demand)
     ├──→ Gemini 2.5 Flash Realtime → voice conversation + vision reasoning
     └──→ MCP Tools → navigation directions, object memory recall
 ```
+
+> **Note:** OCR and MCP tools are only active in GuideLens mode. SignBridge uses Gemini Realtime for voice but does not require text reading.
 
 ## API Endpoints
 
@@ -211,8 +213,8 @@ Camera Frame
 The multi-provider fallback chain (configured in `providers.py`):
 
 ```
-Gemini Pro Vision → xAI Grok → Azure GPT-4o → NVIDIA Cosmos 2 → HuggingFace
-      (primary)       (fast)      (reliable)      (dense desc)     (free tier)
+Azure GPT-4o → Gemini Pro Vision → xAI Grok → NVIDIA Cosmos 2 → HuggingFace
+   (primary)       (fast)            (fast)      (dense desc)     (free tier)
 ```
 
 Each provider uses lazy initialization, health checks, and cooldowns. If one fails, the chain automatically tries the next.
