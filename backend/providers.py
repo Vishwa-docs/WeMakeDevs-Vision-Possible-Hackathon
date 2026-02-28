@@ -344,9 +344,9 @@ class ProviderManager:
 
     # Default fallback order
     DEFAULT_CHAIN: list[ProviderID] = [
+        ProviderID.AZURE_OPENAI,
         ProviderID.GEMINI,
         ProviderID.GROK,
-        ProviderID.AZURE_OPENAI,
         ProviderID.NVIDIA,
         ProviderID.HUGGINGFACE,
     ]
@@ -354,7 +354,7 @@ class ProviderManager:
     def __init__(self) -> None:
         self._adapters: dict[ProviderID, _BaseAdapter] = {}
         self._status: dict[ProviderID, ProviderStatus] = {}
-        self._preferred: ProviderID = ProviderID.GEMINI
+        self._preferred: ProviderID = ProviderID.AZURE_OPENAI
         self._fallback_events: list[FallbackEvent] = []
         self._lock = asyncio.Lock()
 

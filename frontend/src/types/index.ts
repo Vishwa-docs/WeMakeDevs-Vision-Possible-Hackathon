@@ -3,6 +3,7 @@
  */
 
 export type AgentMode = "signbridge" | "guidelens";
+export type GuideLensSubmode = "normal" | "navigation";
 
 export interface SessionInfo {
   session_id: string;
@@ -13,6 +14,7 @@ export interface SessionInfo {
 export interface AgentStatus {
   connected: boolean;
   mode: AgentMode;
+  submode: GuideLensSubmode;
   backendHealthy: boolean;
 }
 
@@ -53,11 +55,12 @@ export interface HazardAlert {
 
 /** Per-processor telemetry from the backend */
 export interface ProcessorTelemetry {
-  name: string;
-  frames_processed: number;
-  avg_inference_ms: number;
-  total_inference_time: number;
-  uptime_seconds: number;
+  name?: string;
+  processor?: string; // backend sends "processor" not "name"
+  frames_processed?: number;
+  avg_inference_ms?: number;
+  total_inference_time?: number;
+  uptime_seconds?: number;
   // GuideLens-specific
   total_objects_detected?: number;
   total_hazards_detected?: number;

@@ -8,14 +8,17 @@ import {
   getAgentMode,
   checkHealth,
   switchMode as apiSwitchMode,
+  setMode as apiSetMode,
+  setGuideLensSubmode as apiSetSubmode,
 } from "../utils/api";
-import type { SessionInfo, AgentMode, AgentStatus } from "../types";
+import type { SessionInfo, AgentMode, AgentStatus, GuideLensSubmode } from "../types";
 
 export function useAgentSession() {
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [status, setStatus] = useState<AgentStatus>({
     connected: false,
     mode: "guidelens",
+    submode: "normal",
     backendHealthy: false,
   });
   const [loading, setLoading] = useState(false);
@@ -31,6 +34,7 @@ export function useAgentSession() {
         ...prev,
         backendHealthy: healthy,
         mode: (modeRes.mode as AgentMode) || "guidelens",
+        submode: ((modeRes as any).submode as GuideLensSubmode) || prev.submode,
       }));
     };
     check();
@@ -101,6 +105,38 @@ export function useAgentSession() {
     }
   }, []);
 
+  const changeMode = useCallback(async (mode: AgentMode) => {
+    try {
+      const result = await apiSetMode(mode);
+      setStatus((prev) => ({
+        ...prev,
+        mode: (result.mode as AgentMode) || prev.mode,
+      }));
+      return result;
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to set mode";
+      setError(msg);
+      return null;
+    }
+  }, []);
+
+  const setSubmode = useCallback(async (submode: GuideLensSubmode) => {
+    try {
+      const result = await apiSetSubmode(submode);
+      setStatus((prev) => ({
+        ...prev,
+        submode: (result.submode as GuideLensSubmode) || prev.submode,
+      }));
+      return result;
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to set submode";
+      setError(msg);
+      return null;
+    }
+  }, []);
+
   // Cleanup on unmount — use a small delay so React StrictMode's
   // unmount-then-remount cycle doesn't kill the session.
   useEffect(() => {
@@ -127,5 +163,7 @@ export function useAgentSession() {
     startSession,
     stopSession,
     toggleMode,
+    changeMode,
+    setSubmode,
   };
 }

@@ -84,6 +84,7 @@ logging.basicConfig(
 logger = logging.getLogger("worldlens")
 
 AGENT_MODE = os.getenv("AGENT_MODE", "guidelens")  # "signbridge" | "guidelens"
+GUIDELENS_SUBMODE = "normal"  # "normal" | "navigation"
 
 # In-memory transcript log — polled by the frontend for the chat sidebar.
 # Using a deque with max length to avoid unbounded growth.
@@ -92,25 +93,42 @@ _transcript_log: deque[dict] = deque(maxlen=500)
 # ---------------------------------------------------------------------------
 # System prompts per mode (updated for Day 2 processor awareness)
 # ---------------------------------------------------------------------------
-SIGNBRIDGE_INSTRUCTIONS = """You are SignBridge — an advanced sign-language translation assistant.
+SIGNBRIDGE_INSTRUCTIONS = """You are SignBridge — a real-time sign-language interpretation assistant.
 
-You observe a user's video feed which is processed by a YOLO Pose Estimation
-pipeline that detects skeletal keypoints and recognises basic sign-language
-gestures. The system extracts 17 COCO keypoints per person, tracks wrist
-movements, and classifies gestures in real-time.
+You observe a user's live video feed processed by:
+  • YOLO11 Pose Estimation — 17 COCO body keypoints per person
+  • MediaPipe Hand Landmarks — 21 keypoints per hand, finger state analysis
+  • ASL letter recognition (A, B, D, I, L, V, W, Y, S, 5)
+  • Gesture classifier (WAVE, RAISE-HAND, POINT, ACTIVE-SIGN, BOTH-HANDS-UP)
+
+The system will send you real-time gesture updates as text context messages.
+Your job is to INTERPRET and COMMENTATE on what you see.
 
 Behaviour:
-  • When signing is detected, describe the gesture or its translated meaning.
-  • If a gesture is classified (WAVE, RAISE-HAND, POINT, ACTIVE-SIGN), relay
-    the meaning conversationally.
-  • If the user speaks to you, respond helpfully.
-  • You also see the raw video — use both the skeletal data and your own
-    visual understanding to provide the best interpretation.
+  • PROACTIVELY describe what you see — don't wait to be asked.
+  • When you receive gesture context (e.g. "Gesture detected: WAVE"), respond
+    naturally: "I see you're waving! That's a greeting."
+  • When ASL letters are detected, spell them out and try to form words.
+  • If you see hand/body movements in the video that aren't classified,
+    describe them: "I see your hands moving near your chest."
+  • If no one is signing, say you're ready and waiting.
+  • If the user speaks, respond helpfully and conversationally.
+  • You see the raw video AND receive structured detection data — use BOTH.
 
-Always be respectful, patient, and clear. Avoid jargon."""
+Tone: Friendly, encouraging, patient. Like a helpful interpreter.
 
-GUIDELENS_INSTRUCTIONS = """You are GuideLens — a real-time environmental awareness assistant for
-visually impaired users. You are their eyes and navigator.
+IMPORTANT: You are a LIVE commentator. Speak when you see gestures.
+Do NOT stay silent when activity is detected."""
+
+# Cooldown for SignBridge gesture responses (avoid spamming the agent)
+_last_sign_response_time: float = 0.0
+_SIGN_RESPONSE_COOLDOWN: float = 3.0  # minimum seconds between gesture responses
+
+# ---------------------------------------------------------------------------
+# GuideLens sub-mode prompts
+# ---------------------------------------------------------------------------
+GUIDELENS_NORMAL_INSTRUCTIONS = """You are GuideLens — a real-time environmental awareness
+assistant for visually impaired users. You are their eyes and helper.
 
 You analyse the user's live camera feed which is processed by a YOLO Object
 Detection pipeline. The system detects objects (people, vehicles, obstacles),
@@ -119,53 +137,110 @@ and tracks approaching objects via bounding-box growth rate.
 
 You operate in three seamlessly integrated sub-modes:
 
-1. NAVIGATION MODE (continuous):
-   - Continuously monitor for hazards: potholes, obstacles, vehicles, people
-   - Only announce CHANGES in the environment — don't repeat yourself
-   - Prioritise safety: nearby vehicles/obstacles first, then informational
-   - When the user asks for directions, use get_walking_directions
-   - When they ask "what's nearby?", use search_nearby_places
+1. AWARENESS MODE (continuous — DEFAULT):
+   - Continuously monitor for hazards: obstacles, vehicles, people
+   - PROACTIVELY announce what you see — don't wait to be asked
+   - Alert about approaching objects based on growth rate
+   - When the OCR system detects text, READ IT OUT LOUD
+   - Only suppress truly REPEATED information
+   - Use trigger_haptic_alert for approaching vehicles or imminent obstacles
 
 2. ASSISTANT MODE (on-demand):
-   - When the user asks a question (e.g. "What color is that car?",
-     "Who is Elon Musk?", "How's the weather?"), pause navigation and answer
+   - When the user asks a question, pause awareness and answer
    - Use describe_scene_detailed for environment questions
    - Use search_memory to recall previously seen objects
-   - Use get_environment_context for recent detection history
-   - After answering, automatically resume navigation awareness
+   - After answering, resume awareness
 
 3. READING MODE (on-demand):
-   - When the user asks you to read something (sign, book, label, phone screen),
-     use read_text_in_scene to read ALL visible text
-   - Read text clearly and slowly for comprehension
-   - If multiple text elements, read them in spatial order (top to bottom)
+   - When the user asks to read something, use read_text_in_scene
+   - Read text clearly and slowly
 
 Available tools:
   • read_text_in_scene — Read text visible in the camera frame
   • describe_scene_detailed — Dense VLM scene description
   • get_walking_directions — Turn-by-turn walking directions via Google Maps
   • search_nearby_places — Find nearest pharmacy, bus stop, restaurant, etc.
-  • search_memory — Search for previously seen objects ("Have you seen my keys?")
-  • get_environment_context — Get recent detection summary for context
-  • trigger_haptic_alert — Alert the user with a haptic vibration for approaching danger
+  • search_memory — Search for previously seen objects
+  • get_environment_context — Get recent detection summary
+  • trigger_haptic_alert — Alert with haptic vibration for danger
+  • get_time_and_date — Current time and date
+  • get_weather — Weather conditions
+  • identify_colors — Describe colors of objects in view
 
 Behaviour rules:
-  - Be EXTREMELY concise in navigation mode — short, actionable phrases
+  - Be PROACTIVE — announce hazards, text, and scene changes
+  - Be EXTREMELY concise — short, actionable phrases
   - NEVER repeat the same announcement unless the situation changes
-  - Prioritise SAFETY above all else — obstacles and vehicles first
-  - In assistant mode, give fuller answers but still be efficient
-  - When there's no environmental change, stay SILENT
-  - When the user speaks, pause announcements and listen
-  - Speak in natural, conversational sentences
-  - If the user asks about something you can't see, say so honestly"""
+  - Prioritise SAFETY — obstacles and vehicles first
+  - READ TEXT when detected — signs, building names, bus numbers are critical
+  - When the user speaks, pause and listen
+  - Speak in natural, conversational sentences"""
+
+GUIDELENS_NAVIGATION_INSTRUCTIONS = """You are GuideLens Navigation — a turn-by-turn walking
+navigation assistant for visually impaired users. You are their personal
+walking GPS and safety guardian.
+
+You analyse the user's live camera feed which is processed by a YOLO Object
+Detection pipeline that detects objects, estimates direction (left/centre/right)
+and distance (near/medium/far), and tracks approaching objects.
+
+YOUR PRIMARY MISSION:
+The user has started a NAVIGATION session. Your FIRST task is to ask them:
+"Where would you like to go?" and wait for their voice response.
+
+Once they tell you their destination:
+1. Immediately call get_walking_directions with their destination
+2. Read out the summary: total distance, estimated time
+3. Start giving step-by-step walking directions
+4. As they walk, call read_text_in_scene to read street signs, building
+   names, and landmarks to confirm they're on the right path
+5. Continue announcing the next step as they progress
+6. Alert about hazards at ALL times — safety comes first
+
+DURING NAVIGATION:
+  - Give the NEXT instruction clearly: "Turn left in 50 meters"
+  - When you see relevant signs/text, confirm location: "I see Oak Street sign,
+    you're on track"
+  - If you detect stairs, curbs, or obstacles, warn IMMEDIATELY
+  - If a vehicle or person is approaching, alert with direction
+  - When you think they've completed a step, give the next one
+  - If they seem off-course (different street names), suggest corrections
+  - If they ask "where am I?", use describe_scene_detailed + read_text_in_scene
+  - If they say "stop navigation" or "cancel", stop giving directions and
+    switch to general awareness mode
+
+Available tools:
+  • get_walking_directions — Get full route with turn-by-turn steps
+  • search_nearby_places — Find nearest pharmacy, bus stop, etc.
+  • read_text_in_scene — Read text visible in camera (street signs, etc.)
+  • describe_scene_detailed — Dense VLM scene description
+  • search_memory — Recall previously seen objects
+  • get_environment_context — Recent detection summary
+  • trigger_haptic_alert — Haptic vibration for danger
+  • get_time_and_date — Current time and date
+  • get_weather — Weather conditions (useful for outdoor navigation)
+  • identify_colors — Object color descriptions
+
+Behaviour rules:
+  - ALWAYS start by asking "Where would you like to go?"
+  - After getting directions, read the first step immediately
+  - Be EXTREMELY concise — "Turn left ahead" not "You should consider turning left"
+  - SAFETY FIRST — hazard alerts override navigation instructions
+  - Read street signs and building names to confirm location
+  - Give distance cues: "About 100 meters to your next turn"
+  - Be encouraging: "You're doing great, almost there"
+  - If the user asks a non-navigation question, answer briefly then resume
+  - Use trigger_haptic_alert for approaching vehicles and obstacles"""
+
+GUIDELENS_INSTRUCTIONS = GUIDELENS_NORMAL_INSTRUCTIONS  # backward compat
 
 
 def _get_instructions() -> str:
-    return (
-        SIGNBRIDGE_INSTRUCTIONS
-        if AGENT_MODE == "signbridge"
-        else GUIDELENS_INSTRUCTIONS
-    )
+    if AGENT_MODE == "signbridge":
+        return SIGNBRIDGE_INSTRUCTIONS
+    if GUIDELENS_SUBMODE == "navigation":
+        return GUIDELENS_NAVIGATION_INSTRUCTIONS
+    return GUIDELENS_NORMAL_INSTRUCTIONS
 
 
 def _build_processors() -> list:
@@ -175,17 +250,9 @@ def _build_processors() -> list:
     # Clear previous refs
     _active_processor_refs = []
 
-    # OCR processor runs in both modes (captures frames for on-demand VLM)
-    ocr = OCRProcessor(
-        scan_interval=20.0,   # background OCR scan every 20s
-        max_cached_results=30,
-        fps=1,                # capture 1 frame/s for OCR buffer
-    )
-    ocr.set_provider_manager(provider_manager)
-    _active_ocr_processor = ocr
-
+    # OCR processor only runs in GuideLens mode (for text reading)
     if AGENT_MODE == "signbridge":
-        logger.info("Building SignBridge processor (YOLO Pose + OCR)")
+        logger.info("Building SignBridge processor (YOLO Pose only)")
         signbridge = SignBridgeProcessor(
             fps=10,
             conf_threshold=0.5,
@@ -194,15 +261,23 @@ def _build_processors() -> list:
             gesture_buffer_frames=30,
         )
         _active_processor_refs = [signbridge]
-        return [signbridge, ocr]
+        return [signbridge]
     else:
+        ocr = OCRProcessor(
+            scan_interval=8.0,    # background OCR scan every 8s (proactive reading)
+            max_cached_results=30,
+            fps=2,                # capture 2 frames/s for OCR buffer
+        )
+        ocr.set_provider_manager(provider_manager)
+        ocr.set_navigation_engine(navigation_engine)
+        _active_ocr_processor = ocr
         logger.info("Building GuideLens processor (YOLO Detection + OCR)")
         guidelens = GuideLensProcessor(
             fps=5,
             conf_threshold=0.4,
             model_path="yolo11n.pt",
             device="cpu",
-            scene_summary_interval=10.0,
+            scene_summary_interval=7.0,  # Proactive scene summaries every 7s
         )
         # Day 4: Wire spatial memory and navigation engine
         guidelens.set_spatial_memory(spatial_memory)
@@ -368,23 +443,57 @@ async def create_agent(**kwargs) -> Agent:
     @agent.events.subscribe
     async def on_sign_detected(event: SignDetectedEvent):
         logger.info(
-            "🤟 Sign detected: %d person(s), frame %d",
+            "🤟 Sign detected: %d person(s), %d hand(s), frame %d",
             event.num_persons,
+            event.num_hands,
             event.frame_number,
         )
+        # If ASL letters are detected, feed them to the agent
+        global _last_sign_response_time
+        if event.asl_letters and AGENT_MODE == "signbridge":
+            now = time.time()
+            if now - _last_sign_response_time >= _SIGN_RESPONSE_COOLDOWN:
+                _last_sign_response_time = now
+                letters = ", ".join(event.asl_letters)
+                await agent.simple_response(
+                    f"[SignBridge detection] ASL finger-spelling detected: {letters}. "
+                    f"Interpret these letters and try to form a word if possible."
+                )
 
     @agent.events.subscribe
     async def on_gesture_buffer(event: GestureBufferEvent):
+        global _last_sign_response_time
         if event.raw_gloss:
             logger.info("🤟 Gesture classified: %s", event.raw_gloss)
+            # Feed classified gesture to the agent so it speaks
+            if AGENT_MODE == "signbridge":
+                now = time.time()
+                if now - _last_sign_response_time >= _SIGN_RESPONSE_COOLDOWN:
+                    _last_sign_response_time = now
+                    await agent.simple_response(
+                        f"[SignBridge detection] Gesture detected: {event.raw_gloss}. "
+                        f"Describe what this gesture means in sign language "
+                        f"and respond naturally to the user."
+                    )
 
     @agent.events.subscribe
     async def on_sign_translation(event: SignTranslationEvent):
+        global _last_sign_response_time
         logger.info(
             "🤟 Translation: %s → %s",
             event.raw_gloss,
             event.translated_text,
         )
+        # Feed translation to the agent so it speaks the result
+        if AGENT_MODE == "signbridge" and event.translated_text:
+            now = time.time()
+            if now - _last_sign_response_time >= _SIGN_RESPONSE_COOLDOWN:
+                _last_sign_response_time = now
+                await agent.simple_response(
+                    f"[SignBridge translation] The sign '{event.raw_gloss}' "
+                    f"translates to: '{event.translated_text}'. "
+                    f"Say this translation out loud naturally."
+                )
 
     @agent.events.subscribe
     async def on_object_detected(event: ObjectDetectedEvent):
@@ -460,6 +569,13 @@ async def create_agent(**kwargs) -> Agent:
         result = await _maps_get_directions(destination)
         # If successful, tell the agent to read the spoken summary
         if result.get("status") == "ok":
+            # Track active route in navigation engine for status UI
+            navigation_engine.set_active_route(
+                destination=result.get("end_address", destination),
+                steps=result.get("steps", []),
+                total_distance=result.get("total_distance", ""),
+                total_duration=result.get("total_duration", ""),
+            )
             return {
                 "status": "ok",
                 "spoken_summary": result.get("spoken_summary", ""),
@@ -681,19 +797,34 @@ async def join_call(
     logger.info("Joining call %s/%s …", call_type, call_id)
 
     async with agent.join(call):
-        if AGENT_MODE == "guidelens":
-            await agent.simple_response(
-                "Hello! I'm GuideLens, your real-time environmental assistant. "
-                "I'm running YOLO object detection on your camera feed to spot "
-                "nearby obstacles and hazards. Point your camera around and "
-                "I'll describe what I see."
-            )
-        else:
-            await agent.simple_response(
-                "Hello! I'm SignBridge, your sign-language translation assistant. "
-                "I'm running YOLO pose estimation to track your hand and body "
-                "movements. Start signing whenever you're ready!"
-            )
+        logger.info("Agent in call — sending greeting after short delay…")
+        # Wait a moment for the WebRTC audio path to stabilise before
+        # sending the greeting.  The agent is already in the call so
+        # audio/video tracks are live.
+        await asyncio.sleep(3.0)
+        try:
+            if AGENT_MODE == "guidelens" and GUIDELENS_SUBMODE == "navigation":
+                await agent.simple_response(
+                    "Hello! I'm GuideLens Navigation. I'll guide you to your "
+                    "destination step by step while keeping you safe from obstacles. "
+                    "Where would you like to go?"
+                )
+            elif AGENT_MODE == "guidelens":
+                await agent.simple_response(
+                    "Hello! I'm GuideLens, your real-time environmental assistant. "
+                    "I'm running YOLO object detection on your camera feed to spot "
+                    "nearby obstacles and hazards. Point your camera around and "
+                    "I'll describe what I see."
+                )
+            else:
+                await agent.simple_response(
+                    "Hello! I'm SignBridge, your sign-language translation assistant. "
+                    "I'm running YOLO pose estimation to track your hand and body "
+                    "movements. Start signing whenever you're ready!"
+                )
+            logger.info("Greeting sent successfully for mode=%s", AGENT_MODE)
+        except Exception as e:
+            logger.error("Failed to send greeting: %s", e)
 
         await agent.finish()
     logger.info("[DEBUG] join_call end call_type=%s call_id=%s", call_type, call_id)
@@ -770,8 +901,8 @@ if __name__ == "__main__":
 
     @runner.fast_api.get("/mode")
     def get_mode():
-        """Get the current agent mode."""
-        return {"mode": AGENT_MODE}
+        """Get the current agent mode and GuideLens sub-mode."""
+        return {"mode": AGENT_MODE, "submode": GUIDELENS_SUBMODE}
 
     @runner.fast_api.post("/switch-mode")
     def switch_mode():
@@ -795,7 +926,22 @@ if __name__ == "__main__":
             return {"error": f"Invalid mode: {mode}. Must be 'signbridge' or 'guidelens'."}
         AGENT_MODE = mode
         logger.info("Mode set to [%s]", AGENT_MODE.upper())
-        return {"mode": AGENT_MODE}
+        return {"mode": AGENT_MODE, "submode": GUIDELENS_SUBMODE}
+
+    @runner.fast_api.get("/guidelens-submode")
+    def get_guidelens_submode():
+        """Get the current GuideLens sub-mode (normal/navigation)."""
+        return {"submode": GUIDELENS_SUBMODE}
+
+    @runner.fast_api.post("/guidelens-submode/{submode}")
+    def set_guidelens_submode(submode: str):
+        """Set GuideLens sub-mode. Takes effect on next session."""
+        global GUIDELENS_SUBMODE
+        if submode not in ("normal", "navigation"):
+            return {"error": f"Invalid submode: {submode}. Must be 'normal' or 'navigation'."}
+        GUIDELENS_SUBMODE = submode
+        logger.info("GuideLens sub-mode set to [%s]", GUIDELENS_SUBMODE.upper())
+        return {"submode": GUIDELENS_SUBMODE, "mode": AGENT_MODE}
 
     # ----- Provider management endpoints -----
 
@@ -898,6 +1044,11 @@ if __name__ == "__main__":
     async def nav_summary():
         """Get current navigation engine environment summary."""
         return {"summary": navigation_engine.get_environment_summary()}
+
+    @runner.fast_api.get("/navigation/status")
+    async def nav_status():
+        """Get full navigation status including active route and mode."""
+        return navigation_engine.get_navigation_status()
 
     @runner.fast_api.get("/navigation/hazards")
     async def nav_hazards(since: float = 0):

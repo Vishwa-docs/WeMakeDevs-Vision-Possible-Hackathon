@@ -1,6 +1,6 @@
 [project]
 name = "worldlens-backend"
-version = "0.1.0"
+version = "1.1.0"
 description = "WorldLens — Dual-mode assistive vision agent (SignBridge + GuideLens)"
 readme = "README.md"
 requires-python = ">=3.12"

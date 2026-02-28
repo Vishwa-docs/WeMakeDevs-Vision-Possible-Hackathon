@@ -1,7 +1,12 @@
 /**
- * Avatar3D — Ready Player Me 3D Avatar with Lip-Sync
- * ===================================================
- * Day 3: Three.js canvas with a rigged RPM .glb model.
+ * Avatar3D — 3D Avatar with Lip-Sync (SignBridge mode)
+ * ====================================================
+ * Three.js canvas with lip-sync driven by morph targets.
+ *
+ * NOTE: Ready Player Me was discontinued on January 31, 2026.
+ * The component now defaults to a built-in geometric fallback avatar.
+ * If you have your own .glb model with viseme morph targets, you can
+ * still supply it via the `avatarUrl` prop or VITE_AVATAR_URL env var.
  *
  * Lip-sync approach:
  *   - The avatar's jaw morph target ("viseme_aa" / "jawOpen") is driven
@@ -13,19 +18,20 @@
  * The `isSpeaking` prop should be set to true whenever the agent is
  * producing speech (detected via transcript activity or audio stream).
  */
-import React, { useRef, useEffect, Suspense } from "react";
+import React, { useRef, useEffect, Suspense, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, useGLTF, Environment } from "@react-three/drei";
 import * as THREE from "three";
 
 // ---------------------------------------------------------------------------
-// Default Ready Player Me avatar URL (half-body, with morph targets)
-// Users can override via the `avatarUrl` prop or VITE_AVATAR_URL env var.
-// To create your own: https://readyplayer.me → create avatar → copy .glb URL
+// Custom avatar URL (optional)
+// Ready Player Me was discontinued on Jan 31, 2026 — their model URLs
+// no longer resolve. If you have your own .glb with viseme morph targets,
+// set VITE_AVATAR_URL in frontend/.env. Otherwise the built-in geometric
+// fallback avatar is used automatically.
 // ---------------------------------------------------------------------------
-const DEFAULT_AVATAR_URL =
-  import.meta.env.VITE_AVATAR_URL ||
-  "https://models.readyplayer.me/6460d95f9ae3dc9f28c1f796.glb?morphTargets=viseme_aa,viseme_E,viseme_I,viseme_O,viseme_U,viseme_PP,viseme_FF,jawOpen&textureAtlas=1024";
+const CUSTOM_AVATAR_URL: string | undefined =
+  import.meta.env.VITE_AVATAR_URL || undefined;
 
 // ---------------------------------------------------------------------------
 // Viseme morph target names (Ready Player Me standard)
@@ -160,12 +166,127 @@ function AvatarLoader() {
 }
 
 // ---------------------------------------------------------------------------
+// Fallback avatar when GLB fails to load (animated head + body silhouette)
+// ---------------------------------------------------------------------------
+function FallbackAvatar({ isSpeaking }: { isSpeaking: boolean }) {
+  const jawRef = useRef(0);
+  const headRef = useRef<THREE.Mesh>(null);
+  const timeRef = useRef(0);
+
+  useFrame((_, delta) => {
+    timeRef.current += delta;
+    const t = timeRef.current;
+
+    // Gentle idle head sway
+    if (headRef.current) {
+      headRef.current.rotation.y = Math.sin(t * 0.5) * 0.05;
+      headRef.current.rotation.z = Math.sin(t * 0.3) * 0.02;
+    }
+
+    // Jaw animation when speaking
+    if (isSpeaking) {
+      jawRef.current = Math.max(0, Math.sin(t * 8) * 0.12 + 0.06);
+    } else {
+      jawRef.current *= 0.9;
+    }
+  });
+
+  return (
+    <group position={[0, -0.3, 0]}>
+      {/* Body / torso */}
+      <mesh position={[0, -0.9, 0]}>
+        <capsuleGeometry args={[0.4, 0.6, 8, 16]} />
+        <meshStandardMaterial color="#3a3a5c" roughness={0.7} />
+      </mesh>
+      {/* Neck */}
+      <mesh position={[0, -0.25, 0]}>
+        <cylinderGeometry args={[0.12, 0.15, 0.2, 12]} />
+        <meshStandardMaterial color="#6a6a8a" roughness={0.6} />
+      </mesh>
+      {/* Head */}
+      <mesh ref={headRef} position={[0, 0.15, 0]}>
+        <sphereGeometry args={[0.32, 24, 24]} />
+        <meshStandardMaterial color="#7a7aa0" roughness={0.5} />
+      </mesh>
+      {/* Eyes */}
+      <mesh position={[-0.1, 0.2, 0.28]}>
+        <sphereGeometry args={[0.04, 12, 12]} />
+        <meshStandardMaterial color="#e0e0ff" emissive="#6c63ff" emissiveIntensity={0.5} />
+      </mesh>
+      <mesh position={[0.1, 0.2, 0.28]}>
+        <sphereGeometry args={[0.04, 12, 12]} />
+        <meshStandardMaterial color="#e0e0ff" emissive="#6c63ff" emissiveIntensity={0.5} />
+      </mesh>
+    </group>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Error boundary for 3D avatar load failures
+// ---------------------------------------------------------------------------
+interface AvatarErrorBoundaryProps {
+  children: React.ReactNode;
+  isSpeaking: boolean;
+}
+interface AvatarErrorBoundaryState {
+  hasError: boolean;
+}
+
+class AvatarErrorBoundary extends React.Component<
+  AvatarErrorBoundaryProps,
+  AvatarErrorBoundaryState
+> {
+  constructor(props: AvatarErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error: Error) {
+    console.warn("[Avatar3D] GLB load failed, using fallback:", error.message);
+  }
+  render() {
+    if (this.state.hasError) {
+      return <FallbackAvatar isSpeaking={this.props.isSpeaking} />;
+    }
+    return this.props.children;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SafeAvatarModel — catches GLB load errors gracefully
+// ---------------------------------------------------------------------------
+function SafeAvatarModel({ url, isSpeaking }: AvatarModelProps) {
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  useEffect(() => {
+    // Pre-check the URL with a HEAD request
+    fetch(url, { method: "HEAD" })
+      .then((res) => {
+        if (!res.ok) setLoadFailed(true);
+      })
+      .catch(() => setLoadFailed(true));
+  }, [url]);
+
+  if (loadFailed) {
+    return <FallbackAvatar isSpeaking={isSpeaking} />;
+  }
+
+  return (
+    <AvatarErrorBoundary isSpeaking={isSpeaking}>
+      <AvatarModel url={url} isSpeaking={isSpeaking} />
+    </AvatarErrorBoundary>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main Avatar3D Component
 // ---------------------------------------------------------------------------
 export interface Avatar3DProps {
   /** Whether the agent is currently speaking */
   isSpeaking: boolean;
-  /** URL to a Ready Player Me .glb model */
+  /** URL to a custom .glb model with viseme morph targets */
   avatarUrl?: string;
   /** CSS style override for container */
   style?: React.CSSProperties;
@@ -179,11 +300,11 @@ export function Avatar3D({
   style,
   className = "",
 }: Avatar3DProps) {
-  const url = avatarUrl || DEFAULT_AVATAR_URL;
+  const url = avatarUrl || CUSTOM_AVATAR_URL;
 
-  // Preload the model
+  // Preload the model (only if a URL is provided)
   useEffect(() => {
-    useGLTF.preload(url);
+    if (url) useGLTF.preload(url);
   }, [url]);
 
   return (
@@ -221,9 +342,13 @@ export function Avatar3D({
         {/* Environment for realistic reflections */}
         <Environment preset="city" />
 
-        {/* Avatar */}
+        {/* Avatar — use custom GLB if provided, otherwise geometric fallback */}
         <Suspense fallback={<AvatarLoader />}>
-          <AvatarModel url={url} isSpeaking={isSpeaking} />
+          {url ? (
+            <SafeAvatarModel url={url} isSpeaking={isSpeaking} />
+          ) : (
+            <FallbackAvatar isSpeaking={isSpeaking} />
+          )}
         </Suspense>
 
         {/* Camera controls (limited rotation for a nice framing) */}

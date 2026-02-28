@@ -10,6 +10,8 @@ WorldLens leverages the **Vision Agents SDK**, **Gemini 2.5 Flash Realtime**, **
 - **👁️ GuideLens** — Environmental awareness for visually impaired users via YOLO11 Detection + MCP tool calling (Maps, Spatial Memory)
 
 > NOTE: Used AI for code generation (ChatGPT / GitHub Copilot) to scaffold the initial architecture, then iteratively refined and optimized based on testing and feedback.
+> NOTE : SignBridge mode was developed till prototype level for sign language translation. The goal was to deploy this as an app with 2 personas : A differently-abled user who uses sign language and another user who may not know sign language. This app would act as a bridge between the two. However, due to time contraints, I dropped this part.
+> In the future, I hope to develop and add some features I was planning, namely **lip reading to speech** and **alerts when someone calls out to the user using vibrations**.
 
 ---
 
@@ -26,7 +28,7 @@ M5StickC Camera → Python Relay → Stream Edge (WebRTC) → Vision Agents Back
                                     │                      │                     │
                               HuggingFace NLP       OCR Processor          MCP Tools
                               (Gloss→English)       (Multi-VLM)            (Maps / Memory)
-                                    │                      │                     │
+                                    │                      . │                     │
                                     └──────────────────────┼─────────────────────┘
                                                            │
                                                   React 19 Frontend
@@ -141,7 +143,7 @@ npm run dev
 |-----------|-----------|
 | Core Orchestration | Vision Agents SDK (`vision-agents>=0.3.7`) |
 | Reasoning Engine | Gemini 2.5 Flash Realtime (speech-to-speech) |
-| Scene Analysis | Multi-VLM fallback (Gemini → Grok → Azure → NVIDIA → HF) |
+| Scene Analysis | Multi-VLM fallback (Azure → Gemini → Grok → NVIDIA → HF) |
 | Pose Estimation | Ultralytics YOLO11 Pose (`yolo11n-pose.pt`) |
 | Object Detection | Ultralytics YOLO11 (`yolo11n.pt`) |
 | Hand Tracking | Google MediaPipe Hand Landmarker (21 keypoints/hand) |
@@ -154,7 +156,7 @@ npm run dev
 | Tool Calling | Model Context Protocol (MCP) — 12 tools |
 | Weather | Open-Meteo API (free, no key required) |
 | Frontend | React 19 + Vite 7 + TypeScript 5.9 |
-| 3D Avatar | React Three Fiber + Ready Player Me |
+| 3D Avatar | React Three Fiber (built-in fallback) |
 | Testing | pytest + asyncio (24 tests) |
 
 ---

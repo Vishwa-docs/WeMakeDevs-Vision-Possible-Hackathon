@@ -17,7 +17,7 @@ import {
 } from "@stream-io/video-react-sdk";
 import type { StreamVideoParticipant } from "@stream-io/video-react-sdk";
 import "@stream-io/video-react-sdk/dist/css/styles.css";
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { Suspense, useEffect, useState, useCallback, useRef } from "react";
 import { STREAM_API_KEY, getStreamConfig } from "../utils/api";
 
 // ---------------------------------------------------------------------------
@@ -102,15 +102,37 @@ function RemoteAudio({ participant }: { participant: StreamVideoParticipant }) {
 // Rendering is gated on CallingState.JOINED so SDK state is populated.
 // ---------------------------------------------------------------------------
 function CallUI({ onLeave }: { onLeave?: () => void }) {
-  const {
-    useParticipants,
-    useLocalParticipant,
-    useCallCallingState,
-  } = useCallStateHooks();
+  // Call ALL hooks unconditionally at the top — React rules of hooks.
+  // useCallStateHooks() returns the hooks module; we then call each hook.
+  let callingState: CallingState | undefined;
+  let participants: StreamVideoParticipant[] | undefined;
+  let localParticipant: StreamVideoParticipant | undefined;
 
-  const callingState = useCallCallingState();
-  const participants = useParticipants();
-  const localParticipant = useLocalParticipant();
+  try {
+    const hooks = useCallStateHooks();
+    callingState = hooks.useCallCallingState();
+    participants = hooks.useParticipants();
+    localParticipant = hooks.useLocalParticipant();
+  } catch (err) {
+    console.error("[WorldLens][CallUI] Hook error:", err);
+    return (
+      <div className="call-ui">
+        <div className="video-grid">
+          <div
+            className="video-tile remote"
+            style={{ display: "grid", placeItems: "center", color: "#ff6b6b" }}
+          >
+            <span>⚠️ Stream SDK error: {String(err)}</span>
+          </div>
+        </div>
+        <div className="call-controls">
+          <button className="btn btn-danger" onClick={onLeave}>
+            Leave Call
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Gate: only render participant-dependent UI once the call is fully joined
   // and the SDK has initialized the participants array.
@@ -148,7 +170,7 @@ function CallUI({ onLeave }: { onLeave?: () => void }) {
 
   return (
     <div className="call-ui">
-      {/* Main video area */}
+      {/* Main video area — side by side: AI (large) + You (small) */}
       <div className="video-grid">
         {!hasAnyVideoParticipant && (
           <div
@@ -158,7 +180,18 @@ function CallUI({ onLeave }: { onLeave?: () => void }) {
             <span>Joining call… waiting for camera/participants.</span>
           </div>
         )}
-        {/* Local camera (user) */}
+
+        {/* Remote participants (agent AI video) — main large view */}
+        {remoteParticipants.map((p) => (
+          <div key={p.sessionId} className="video-tile remote">
+            <ParticipantView participant={p} trackType="videoTrack" />
+            <span className="video-label">
+              {p.name || p.userId || "WorldLens AI"}
+            </span>
+          </div>
+        ))}
+
+        {/* Local camera (user) — small picture-in-picture */}
         {localParticipant && (
           <div className="video-tile local">
             <ParticipantView
@@ -168,33 +201,18 @@ function CallUI({ onLeave }: { onLeave?: () => void }) {
             <span className="video-label">You</span>
           </div>
         )}
-
-        {/* Remote participants (agent video tracks) */}
-        {remoteParticipants.map((p) => (
-          <div key={p.sessionId} className="video-tile remote">
-            <ParticipantView participant={p} trackType="videoTrack" />
-            <span className="video-label">
-              {p.name || p.userId || "WorldLens Agent"}
-            </span>
-          </div>
-        ))}
       </div>
 
-      {/* Play remote participants' audio (agent voice) —
-           manual <audio> elements instead of ParticipantsAudio to avoid
-           the SDK's internal participants.map crash */}
+      {/* Play remote participants' audio (agent voice) */}
       {remoteParticipants.map((p) => (
         <RemoteAudio key={`audio-${p.sessionId}`} participant={p} />
       ))}
 
       {/* Controls */}
       <div className="call-controls">
-        <button className="btn btn-danger" onClick={onLeave}>
-          Leave Call
+        <button className="btn btn-danger btn-end-session" onClick={onLeave}>
+          End Session
         </button>
-        <span className="participant-count">
-          {participants.length} participant{participants.length !== 1 ? "s" : ""}
-        </span>
       </div>
     </div>
   );
@@ -256,10 +274,16 @@ export function VideoRoom({
         if (cancelled) return;
 
         // 3. Create Stream Video client
+        // Use tokenProvider when possible for resilience (SDK can refresh)
         const newClient = new StreamVideoClient({
           apiKey: key,
           user: { id: userId, name: userName },
           token: data.token,
+          tokenProvider: async () => {
+            const r = await fetch(`${backendUrl}/token?user_id=${userId}`);
+            const d = await r.json();
+            return d.token;
+          },
         });
         clientRef.current = newClient;
         console.log("[WorldLens][VideoRoom] StreamVideoClient created");
@@ -282,8 +306,23 @@ export function VideoRoom({
         console.log("[WorldLens][VideoRoom] join success");
 
         // 5. Enable camera & microphone (best-effort)
+        // Use 480p for lower latency — reduces bandwidth & backend processing
         try {
           await streamCall.camera.enable();
+          // Prefer 480p @ 15fps for lower latency over quality
+          try {
+            const videoTrack = streamCall.camera.state.mediaStream?.getVideoTracks()[0];
+            if (videoTrack) {
+              await videoTrack.applyConstraints({
+                width: { ideal: 640 },
+                height: { ideal: 480 },
+                frameRate: { ideal: 15, max: 20 },
+              });
+              console.log("[WorldLens][VideoRoom] camera constrained to 480p@15fps");
+            }
+          } catch (constraintErr) {
+            console.warn("[WorldLens][VideoRoom] camera constraint failed", constraintErr);
+          }
           console.log("[WorldLens][VideoRoom] camera enabled");
         } catch (e) {
           console.warn("[WorldLens][VideoRoom] camera enable failed", e);
@@ -372,13 +411,22 @@ export function VideoRoom({
 
   return (
     <VideoErrorBoundary onReset={onLeave}>
-      <StreamVideo client={client}>
-        <StreamTheme>
-          <StreamCall call={call}>
-            <CallUI onLeave={handleLeave} />
-          </StreamCall>
-        </StreamTheme>
-      </StreamVideo>
+      <Suspense
+        fallback={
+          <div className="video-room loading">
+            <div className="spinner" />
+            <p>Loading video components…</p>
+          </div>
+        }
+      >
+        <StreamVideo client={client}>
+          <StreamTheme>
+            <StreamCall call={call}>
+              <CallUI onLeave={handleLeave} />
+            </StreamCall>
+          </StreamTheme>
+        </StreamVideo>
+      </Suspense>
     </VideoErrorBoundary>
   );
 }

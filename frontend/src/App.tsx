@@ -10,14 +10,82 @@ import { VideoRoom } from "./components/VideoRoom";
 import { ChatLog } from "./components/ChatLog";
 import { TelemetryPanel } from "./components/TelemetryPanel";
 import { AlertOverlay } from "./components/AlertOverlay";
-import { ProviderSelector } from "./components/ProviderSelector";
 import { Avatar3D } from "./components/Avatar3D";
 import { OCROverlay } from "./components/OCROverlay";
+import { NavigationStatus } from "./components/NavigationStatus";
 import { ToastContainer, useToasts } from "./components/Toast";
 import { getTranscript, clearTranscript, getTelemetry, pollHazardAlerts } from "./utils/api";
 import type { TranscriptEntry, TelemetryData, HazardAlert } from "./types";
-import type { FallbackEvent } from "./utils/api";
 import "./App.css";
+
+// ---------------------------------------------------------------------------
+// Session-level Error Boundary — prevents the session view from blank-page
+// ---------------------------------------------------------------------------
+interface SEBProps {
+  children: React.ReactNode;
+  onReset?: () => void;
+}
+interface SEBState {
+  error: Error | null;
+}
+
+class SessionErrorBoundary extends React.Component<SEBProps, SEBState> {
+  constructor(props: SEBProps) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error("[WorldLens][SessionErrorBoundary]", error, info.componentStack);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "2rem",
+            color: "#e0e0e0",
+          }}
+        >
+          <h2>⚠️ Session Error</h2>
+          <pre
+            style={{
+              background: "#1a1a2e",
+              color: "#ff6b6b",
+              padding: "1rem",
+              borderRadius: "8px",
+              maxWidth: "600px",
+              overflow: "auto",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              fontSize: "0.8rem",
+              marginBottom: "1rem",
+            }}
+          >
+            {this.state.error.message}
+          </pre>
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              this.setState({ error: null });
+              this.props.onReset?.();
+            }}
+          >
+            End Session &amp; Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function App() {
   const {
@@ -28,21 +96,11 @@ function App() {
     startSession,
     stopSession,
     toggleMode,
+    changeMode,
+    setSubmode,
   } = useAgentSession();
   const [modeMessage, setModeMessage] = useState<string | null>(null);
   const { toasts, addToast, dismissToast } = useToasts();
-
-  // Handle provider fallback events → show toast
-  const handleFallbackToast = useCallback(
-    (event: FallbackEvent) => {
-      addToast(
-        `Provider ${event.original} failed (${event.reason}). Switched to ${event.fallback}.`,
-        "warning",
-        6000
-      );
-    },
-    [addToast]
-  );
 
   const [callId, setCallId] = useState(`worldlens-${Date.now()}`);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
@@ -141,7 +199,7 @@ function App() {
           }, 3000);
         }
       }
-    }, 1500);
+    }, 1000);  // Poll transcript every 1s for faster updates
     return () => {
       clearInterval(interval);
       if (agentSpeechTimer.current) clearTimeout(agentSpeechTimer.current);
@@ -176,7 +234,7 @@ function App() {
         if (alertDeactivateTimer.current) clearTimeout(alertDeactivateTimer.current);
         alertDeactivateTimer.current = setTimeout(() => setAlertActive(false), dur + 200);
       }
-    }, 2000);
+    }, 1500);  // Poll hazard alerts every 1.5s
     return () => {
       clearInterval(interval);
       if (alertDeactivateTimer.current) clearTimeout(alertDeactivateTimer.current);
@@ -191,7 +249,7 @@ function App() {
       if (data) {
         setTelemetry(data);
       }
-    }, 3000);
+    }, 1500);  // Poll telemetry every 1.5s for real-time feel
     // Fetch immediately on mount
     getTelemetry().then((d) => d && setTelemetry(d));
     return () => clearInterval(interval);
@@ -247,30 +305,26 @@ function App() {
   return (
     <div className="app">
       {/* Alert overlay for hazard warnings (Day 5: real hazard alerts) */}
-      <AlertOverlay
-        active={alertActive}
-        alert={currentAlert}
-        message={currentAlert?.text || "Obstacle detected!"}
-        direction={currentAlert?.direction}
-      />
+      {status.mode !== "signbridge" && (
+        <AlertOverlay
+          active={alertActive}
+          alert={currentAlert}
+          message={currentAlert?.text || "Obstacle detected!"}
+          direction={currentAlert?.direction}
+        />
+      )}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
       {/* Header */}
       <header className="app-header">
         <div className="logo">
           <h1>🌍 WorldLens</h1>
-          <span className="tagline">
-            {status.mode === "signbridge"
-              ? "Sign Language Translation"
-              : "Environmental Awareness"}
-          </span>
         </div>
         <StatusBar
           status={status}
           onToggleMode={handleToggleMode}
           sessionActive={!!session}
         />
-        <ProviderSelector onFallbackToast={handleFallbackToast} />
       </header>
 
       {/* Mode switch notification */}
@@ -284,29 +338,66 @@ function App() {
           /* Landing / connect screen */
           <div className="landing">
             <div className="landing-card">
-              <div className="landing-hero-icon">🌍</div>
               <h2>WorldLens</h2>
               <p className="landing-subtitle">
                 AI-Powered Assistive Vision Platform
               </p>
               <p className="landing-desc">
-                Dual-mode assistive vision powered by Vision Agents SDK,
-                Gemini 2.5 Flash Realtime, and GetStream Edge.
+                Dual-mode assistive vision platform for environmental awareness and sign language translation.
               </p>
 
               {/* Mode cards */}
               <div className="mode-cards">
-                <div className={`mode-card ${status.mode === "guidelens" ? "active" : ""}`}>
+                <button
+                  className={`mode-card ${status.mode === "guidelens" ? "active" : ""}`}
+                  onClick={() => changeMode("guidelens")}
+                  type="button"
+                >
                   <span className="mode-card-icon">👁️</span>
                   <span className="mode-card-title">GuideLens</span>
                   <span className="mode-card-desc">Environmental awareness, hazard detection, navigation</span>
-                </div>
-                <div className={`mode-card ${status.mode === "signbridge" ? "active" : ""}`}>
+                </button>
+                <button
+                  className={`mode-card ${status.mode === "signbridge" ? "active" : ""}`}
+                  onClick={() => changeMode("signbridge")}
+                  type="button"
+                >
                   <span className="mode-card-icon">🤟</span>
                   <span className="mode-card-title">SignBridge</span>
                   <span className="mode-card-desc">Sign language recognition, 3D avatar, translation</span>
-                </div>
+                </button>
               </div>
+
+              {/* GuideLens sub-mode selector */}
+              {status.mode === "guidelens" && (
+                <div className="submode-selector">
+                  <p className="submode-label">GuideLens Mode</p>
+                  <div className="submode-cards">
+                    <button
+                      className={`submode-card ${status.submode === "normal" ? "active" : ""}`}
+                      onClick={() => setSubmode("normal")}
+                      type="button"
+                    >
+                      <span className="submode-card-icon">👁️</span>
+                      <span className="submode-card-title">Normal</span>
+                      <span className="submode-card-desc">
+                        Environmental awareness, hazard detection &amp; text reading
+                      </span>
+                    </button>
+                    <button
+                      className={`submode-card ${status.submode === "navigation" ? "active" : ""}`}
+                      onClick={() => setSubmode("navigation")}
+                      type="button"
+                    >
+                      <span className="submode-card-icon">🧭</span>
+                      <span className="submode-card-title">Navigation</span>
+                      <span className="submode-card-desc">
+                        Tell me where to go — step-by-step walking directions
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div className="status-check">
                 <span
@@ -340,27 +431,25 @@ function App() {
                 Opens camera &amp; microphone to connect with WorldLens AI.
               </p>
 
-              {/* Feature badges */}
-              <div className="feature-badges">
-                <span className="feature-badge">🧠 Gemini 2.5 Flash</span>
-                <span className="feature-badge">📹 Real-time Video</span>
-                <span className="feature-badge">🗣️ Voice AI</span>
-                <span className="feature-badge">🗺️ Google Maps</span>
-                <span className="feature-badge">🔍 YOLO Detection</span>
-                <span className="feature-badge">✋ MediaPipe</span>
-              </div>
+
             </div>
           </div>
         ) : (
           /* Active session */
+          <SessionErrorBoundary onReset={handleStop}>
           <div className="session-layout">
-            {/* Video area with OCR overlay */}
+            {/* Video area with OCR overlay and navigation status */}
             <div className="video-area">
               <VideoRoom
                 callId={session.call_id || callId}
                 onLeave={handleStop}
               />
-              <OCROverlay active={!!session} pollInterval={5000} />
+              {status.mode !== "signbridge" && (
+                <OCROverlay active={!!session} pollInterval={3000} />
+              )}
+              {status.mode === "guidelens" && (
+                <NavigationStatus active={!!session} pollInterval={2000} />
+              )}
             </div>
 
             {/* Sidebar */}
@@ -399,16 +488,17 @@ function App() {
                     <span className="live-dot" /> LIVE
                   </span>
                 </div>
-                <TelemetryPanel data={telemetry} />
+                <TelemetryPanel data={telemetry} mode={status.mode} />
               </div>
             </aside>
           </div>
+          </SessionErrorBoundary>
         )}
       </main>
 
       {/* Footer */}
       <footer className="app-footer">
-        <span>WorldLens v0.1 • Vision Agents SDK • Gemini 2.5 Flash • GetStream Edge</span>
+        <span>WorldLens V1.1 • Vision Agents SDK • Gemini 2.5 Flash • GetStream Edge</span>
       </footer>
     </div>
   );
