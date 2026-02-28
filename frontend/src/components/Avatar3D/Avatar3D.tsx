@@ -25,7 +25,7 @@ import * as THREE from "three";
 // ---------------------------------------------------------------------------
 const DEFAULT_AVATAR_URL =
   import.meta.env.VITE_AVATAR_URL ||
-  "https://models.readyplayer.me/6460d95f9ae3dc9f28c1f796.glb?morphTargets=viseme_aa,viseme_E,viseme_I,viseme_O,viseme_U,viseme_PP,viseme_FF,jawOpen&textureAtlas=1024";
+  "https://models.readyplayer.me/64c91a19df3aea270a845a68.glb?morphTargets=viseme_aa,viseme_E,viseme_I,viseme_O,viseme_U,viseme_PP,viseme_FF,jawOpen&textureAtlas=1024";
 
 // ---------------------------------------------------------------------------
 // Viseme morph target names (Ready Player Me standard)

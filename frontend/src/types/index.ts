@@ -3,6 +3,7 @@
  */
 
 export type AgentMode = "signbridge" | "guidelens";
+export type GuideLensSubmode = "normal" | "navigation";
 
 export interface SessionInfo {
   session_id: string;
@@ -13,6 +14,7 @@ export interface SessionInfo {
 export interface AgentStatus {
   connected: boolean;
   mode: AgentMode;
+  submode: GuideLensSubmode;
   backendHealthy: boolean;
 }
 

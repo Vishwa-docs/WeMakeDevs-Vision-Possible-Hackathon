@@ -98,6 +98,8 @@ function App() {
     startSession,
     stopSession,
     toggleMode,
+    changeMode,
+    setSubmode,
   } = useAgentSession();
   const [modeMessage, setModeMessage] = useState<string | null>(null);
   const { toasts, addToast, dismissToast } = useToasts();
@@ -366,17 +368,56 @@ function App() {
 
               {/* Mode cards */}
               <div className="mode-cards">
-                <div className={`mode-card ${status.mode === "guidelens" ? "active" : ""}`}>
+                <button
+                  className={`mode-card ${status.mode === "guidelens" ? "active" : ""}`}
+                  onClick={() => changeMode("guidelens")}
+                  type="button"
+                >
                   <span className="mode-card-icon">👁️</span>
                   <span className="mode-card-title">GuideLens</span>
                   <span className="mode-card-desc">Environmental awareness, hazard detection, navigation</span>
-                </div>
-                <div className={`mode-card ${status.mode === "signbridge" ? "active" : ""}`}>
+                </button>
+                <button
+                  className={`mode-card ${status.mode === "signbridge" ? "active" : ""}`}
+                  onClick={() => changeMode("signbridge")}
+                  type="button"
+                >
                   <span className="mode-card-icon">🤟</span>
                   <span className="mode-card-title">SignBridge</span>
                   <span className="mode-card-desc">Sign language recognition, 3D avatar, translation</span>
-                </div>
+                </button>
               </div>
+
+              {/* GuideLens sub-mode selector */}
+              {status.mode === "guidelens" && (
+                <div className="submode-selector">
+                  <p className="submode-label">GuideLens Mode</p>
+                  <div className="submode-cards">
+                    <button
+                      className={`submode-card ${status.submode === "normal" ? "active" : ""}`}
+                      onClick={() => setSubmode("normal")}
+                      type="button"
+                    >
+                      <span className="submode-card-icon">👁️</span>
+                      <span className="submode-card-title">Normal</span>
+                      <span className="submode-card-desc">
+                        Environmental awareness, hazard detection &amp; text reading
+                      </span>
+                    </button>
+                    <button
+                      className={`submode-card ${status.submode === "navigation" ? "active" : ""}`}
+                      onClick={() => setSubmode("navigation")}
+                      type="button"
+                    >
+                      <span className="submode-card-icon">🧭</span>
+                      <span className="submode-card-title">Navigation</span>
+                      <span className="submode-card-desc">
+                        Tell me where to go — step-by-step walking directions
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div className="status-check">
                 <span

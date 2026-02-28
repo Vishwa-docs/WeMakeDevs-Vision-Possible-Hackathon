@@ -265,8 +265,16 @@
   background: #0d0d14;
   border: 1px solid #1e1e2e;
   border-radius: 10px;
-  cursor: default;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
+}
+
+.mode-card:hover {
+  border-color: #444;
+  background: #111120;
 }
 
 .mode-card.active {
@@ -290,6 +298,71 @@
   font-size: 0.7rem;
   color: #777;
   line-height: 1.4;
+}
+
+/* GuideLens sub-mode selector */
+.submode-selector {
+  margin: 0.75rem 0 0.25rem;
+  text-align: center;
+}
+
+.submode-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #a78bfa;
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.submode-cards {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+.submode-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.6rem 0.75rem;
+  background: #0d0d14;
+  border: 1px solid #1e1e2e;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
+}
+
+.submode-card:hover {
+  border-color: #444;
+  background: #111120;
+}
+
+.submode-card.active {
+  border-color: #6c63ff;
+  box-shadow: 0 0 10px #6c63ff33;
+  background: #12121e;
+}
+
+.submode-card-icon {
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.submode-card-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #d0d0e8;
+}
+
+.submode-card-desc {
+  font-size: 0.65rem;
+  color: #777;
+  line-height: 1.3;
 }
 
 .feature-badges {

@@ -74,6 +74,24 @@ export async function setMode(
   return res.json();
 }
 
+/** Get GuideLens sub-mode (normal / navigation) */
+export async function getGuideLensSubmode(): Promise<{ submode: string }> {
+  const res = await fetch(`${BACKEND_URL}/guidelens-submode`);
+  if (!res.ok) return { submode: "normal" };
+  return res.json();
+}
+
+/** Set GuideLens sub-mode */
+export async function setGuideLensSubmode(
+  submode: "normal" | "navigation"
+): Promise<{ submode: string; mode: string }> {
+  const res = await fetch(`${BACKEND_URL}/guidelens-submode/${submode}`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error(`Failed to set submode: ${res.statusText}`);
+  return res.json();
+}
+
 /** Check backend health */
 export async function checkHealth(): Promise<boolean> {
   try {
