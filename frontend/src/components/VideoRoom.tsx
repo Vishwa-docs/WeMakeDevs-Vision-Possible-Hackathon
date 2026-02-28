@@ -17,7 +17,7 @@ import {
 } from "@stream-io/video-react-sdk";
 import type { StreamVideoParticipant } from "@stream-io/video-react-sdk";
 import "@stream-io/video-react-sdk/dist/css/styles.css";
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { Suspense, useEffect, useState, useCallback, useRef } from "react";
 import { STREAM_API_KEY, getStreamConfig } from "../utils/api";
 
 // ---------------------------------------------------------------------------
@@ -102,15 +102,37 @@ function RemoteAudio({ participant }: { participant: StreamVideoParticipant }) {
 // Rendering is gated on CallingState.JOINED so SDK state is populated.
 // ---------------------------------------------------------------------------
 function CallUI({ onLeave }: { onLeave?: () => void }) {
-  const {
-    useParticipants,
-    useLocalParticipant,
-    useCallCallingState,
-  } = useCallStateHooks();
+  // Call ALL hooks unconditionally at the top — React rules of hooks.
+  // useCallStateHooks() returns the hooks module; we then call each hook.
+  let callingState: CallingState | undefined;
+  let participants: StreamVideoParticipant[] | undefined;
+  let localParticipant: StreamVideoParticipant | undefined;
 
-  const callingState = useCallCallingState();
-  const participants = useParticipants();
-  const localParticipant = useLocalParticipant();
+  try {
+    const hooks = useCallStateHooks();
+    callingState = hooks.useCallCallingState();
+    participants = hooks.useParticipants();
+    localParticipant = hooks.useLocalParticipant();
+  } catch (err) {
+    console.error("[WorldLens][CallUI] Hook error:", err);
+    return (
+      <div className="call-ui">
+        <div className="video-grid">
+          <div
+            className="video-tile remote"
+            style={{ display: "grid", placeItems: "center", color: "#ff6b6b" }}
+          >
+            <span>⚠️ Stream SDK error: {String(err)}</span>
+          </div>
+        </div>
+        <div className="call-controls">
+          <button className="btn btn-danger" onClick={onLeave}>
+            Leave Call
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Gate: only render participant-dependent UI once the call is fully joined
   // and the SDK has initialized the participants array.
@@ -256,10 +278,16 @@ export function VideoRoom({
         if (cancelled) return;
 
         // 3. Create Stream Video client
+        // Use tokenProvider when possible for resilience (SDK can refresh)
         const newClient = new StreamVideoClient({
           apiKey: key,
           user: { id: userId, name: userName },
           token: data.token,
+          tokenProvider: async () => {
+            const r = await fetch(`${backendUrl}/token?user_id=${userId}`);
+            const d = await r.json();
+            return d.token;
+          },
         });
         clientRef.current = newClient;
         console.log("[WorldLens][VideoRoom] StreamVideoClient created");
@@ -372,13 +400,22 @@ export function VideoRoom({
 
   return (
     <VideoErrorBoundary onReset={onLeave}>
-      <StreamVideo client={client}>
-        <StreamTheme>
-          <StreamCall call={call}>
-            <CallUI onLeave={handleLeave} />
-          </StreamCall>
-        </StreamTheme>
-      </StreamVideo>
+      <Suspense
+        fallback={
+          <div className="video-room loading">
+            <div className="spinner" />
+            <p>Loading video components…</p>
+          </div>
+        }
+      >
+        <StreamVideo client={client}>
+          <StreamTheme>
+            <StreamCall call={call}>
+              <CallUI onLeave={handleLeave} />
+            </StreamCall>
+          </StreamTheme>
+        </StreamVideo>
+      </Suspense>
     </VideoErrorBoundary>
   );
 }

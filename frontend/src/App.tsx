@@ -19,6 +19,75 @@ import type { TranscriptEntry, TelemetryData, HazardAlert } from "./types";
 import type { FallbackEvent } from "./utils/api";
 import "./App.css";
 
+// ---------------------------------------------------------------------------
+// Session-level Error Boundary — prevents the session view from blank-page
+// ---------------------------------------------------------------------------
+interface SEBProps {
+  children: React.ReactNode;
+  onReset?: () => void;
+}
+interface SEBState {
+  error: Error | null;
+}
+
+class SessionErrorBoundary extends React.Component<SEBProps, SEBState> {
+  constructor(props: SEBProps) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error("[WorldLens][SessionErrorBoundary]", error, info.componentStack);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "2rem",
+            color: "#e0e0e0",
+          }}
+        >
+          <h2>⚠️ Session Error</h2>
+          <pre
+            style={{
+              background: "#1a1a2e",
+              color: "#ff6b6b",
+              padding: "1rem",
+              borderRadius: "8px",
+              maxWidth: "600px",
+              overflow: "auto",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              fontSize: "0.8rem",
+              marginBottom: "1rem",
+            }}
+          >
+            {this.state.error.message}
+          </pre>
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              this.setState({ error: null });
+              this.props.onReset?.();
+            }}
+          >
+            End Session &amp; Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function App() {
   const {
     session,
@@ -353,6 +422,7 @@ function App() {
           </div>
         ) : (
           /* Active session */
+          <SessionErrorBoundary onReset={handleStop}>
           <div className="session-layout">
             {/* Video area with OCR overlay */}
             <div className="video-area">
@@ -403,6 +473,7 @@ function App() {
               </div>
             </aside>
           </div>
+          </SessionErrorBoundary>
         )}
       </main>
 
