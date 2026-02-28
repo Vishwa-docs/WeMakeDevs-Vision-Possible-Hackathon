@@ -13,6 +13,7 @@ import { AlertOverlay } from "./components/AlertOverlay";
 import { ProviderSelector } from "./components/ProviderSelector";
 import { Avatar3D } from "./components/Avatar3D";
 import { OCROverlay } from "./components/OCROverlay";
+import { NavigationStatus } from "./components/NavigationStatus";
 import { ToastContainer, useToasts } from "./components/Toast";
 import { getTranscript, clearTranscript, getTelemetry, pollHazardAlerts } from "./utils/api";
 import type { TranscriptEntry, TelemetryData, HazardAlert } from "./types";
@@ -210,7 +211,7 @@ function App() {
           }, 3000);
         }
       }
-    }, 1500);
+    }, 1000);  // Poll transcript every 1s for faster updates
     return () => {
       clearInterval(interval);
       if (agentSpeechTimer.current) clearTimeout(agentSpeechTimer.current);
@@ -245,7 +246,7 @@ function App() {
         if (alertDeactivateTimer.current) clearTimeout(alertDeactivateTimer.current);
         alertDeactivateTimer.current = setTimeout(() => setAlertActive(false), dur + 200);
       }
-    }, 2000);
+    }, 1500);  // Poll hazard alerts every 1.5s
     return () => {
       clearInterval(interval);
       if (alertDeactivateTimer.current) clearTimeout(alertDeactivateTimer.current);
@@ -260,7 +261,7 @@ function App() {
       if (data) {
         setTelemetry(data);
       }
-    }, 3000);
+    }, 1500);  // Poll telemetry every 1.5s for real-time feel
     // Fetch immediately on mount
     getTelemetry().then((d) => d && setTelemetry(d));
     return () => clearInterval(interval);
@@ -424,13 +425,16 @@ function App() {
           /* Active session */
           <SessionErrorBoundary onReset={handleStop}>
           <div className="session-layout">
-            {/* Video area with OCR overlay */}
+            {/* Video area with OCR overlay and navigation status */}
             <div className="video-area">
               <VideoRoom
                 callId={session.call_id || callId}
                 onLeave={handleStop}
               />
-              <OCROverlay active={!!session} pollInterval={5000} />
+              <OCROverlay active={!!session} pollInterval={3000} />
+              {status.mode === "guidelens" && (
+                <NavigationStatus active={!!session} pollInterval={2000} />
+              )}
             </div>
 
             {/* Sidebar */}
@@ -479,7 +483,7 @@ function App() {
 
       {/* Footer */}
       <footer className="app-footer">
-        <span>WorldLens v0.1 • Vision Agents SDK • Gemini 2.5 Flash • GetStream Edge</span>
+        <span>WorldLens V1.1 • Vision Agents SDK • Gemini 2.5 Flash • GetStream Edge</span>
       </footer>
     </div>
   );

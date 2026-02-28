@@ -108,6 +108,9 @@ class OCRProcessor(VideoProcessor):
         # Provider manager reference — set by main.py after creation
         self._provider_manager = None
 
+        # Navigation engine reference — for proactive text announcements
+        self._navigation_engine = None
+
         # Day 5: Telemetry metrics
         self._total_ocr_calls = 0
         self._total_scene_calls = 0
@@ -116,6 +119,11 @@ class OCRProcessor(VideoProcessor):
     def set_provider_manager(self, pm: Any) -> None:
         """Inject the ProviderManager for VLM calls."""
         self._provider_manager = pm
+
+    def set_navigation_engine(self, engine: Any) -> None:
+        """Inject the NavigationEngine for proactive OCR announcements."""
+        self._navigation_engine = engine
+        logger.info("OCRProcessor: navigation engine connected")
 
     def get_telemetry(self) -> dict:
         """Return real-time telemetry metrics for the /telemetry endpoint."""
@@ -373,6 +381,29 @@ class OCRProcessor(VideoProcessor):
                                 timestamp_unix=time.time(),
                             )
                         )
+
+                    # Proactive: push text to navigation engine for auto-announce
+                    if self._navigation_engine:
+                        from mcp_tools.navigation_engine import Priority
+                        ocr_key = f"ocr_text:{text[:40]}"
+                        if self._navigation_engine.announcer.should_announce(ocr_key, Priority.MEDIUM):
+                            alert_entry = {
+                                "text": f"Text detected: {text[:120]}",
+                                "priority": Priority.MEDIUM,
+                                "severity": "caution",
+                                "type": "ocr_auto",
+                                "class": "text",
+                                "direction": "center",
+                                "sound": "chime",
+                                "duration_ms": 2000,
+                                "timestamp": time.time(),
+                            }
+                            self._navigation_engine._hazard_alerts.append(alert_entry)
+                            self._navigation_engine.announcer.record_announcement(
+                                ocr_key, alert_entry["text"], Priority.MEDIUM,
+                            )
+                            logger.info("Proactive OCR announce: %s", text[:60])
+
                     logger.info("Background OCR: '%s' via %s", text[:60], provider.value)
             except Exception as e:
                 logger.debug("Background OCR scan skipped: %s", e)

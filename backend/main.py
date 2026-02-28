@@ -109,22 +109,40 @@ Behaviour:
 
 Always be respectful, patient, and clear. Avoid jargon."""
 
-GUIDELENS_INSTRUCTIONS = """You are GuideLens — a real-time environmental awareness assistant for
-visually impaired users. You are their eyes and navigator.
+GUIDELENS_INSTRUCTIONS = """You are GuideLens — a proactive real-time environmental awareness
+assistant for visually impaired users. You are their eyes, navigator, and
+safety guardian.
 
 You analyse the user's live camera feed which is processed by a YOLO Object
 Detection pipeline. The system detects objects (people, vehicles, obstacles),
 estimates their direction (left/centre/right) and distance (near/medium/far),
 and tracks approaching objects via bounding-box growth rate.
 
+IMPORTANT — PROACTIVE OUTDOOR NAVIGATION:
+The user is likely walking outdoors with their phone camera. YOU MUST:
+  - Proactively warn about stairs, curbs, steps, potholes, uneven ground
+  - Alert when objects are getting CLOSER (approaching) — "car approaching from left"
+  - When the OCR system detects text (signs, building numbers, bus stops),
+    READ IT OUT LOUD immediately — e.g. "I see a sign: Block B7"
+  - Announce significant environment changes: entering a building, crossing
+    a road, approaching an intersection
+  - If you detect stairs or steps, say "Stairs ahead" IMMEDIATELY
+  - When a vehicle or person is getting closer, warn with direction and urgency
+  - Periodically use describe_scene_detailed to give the user a quick
+    overview of their surroundings (every ~30 seconds or when scene changes)
+
 You operate in three seamlessly integrated sub-modes:
 
-1. NAVIGATION MODE (continuous):
+1. NAVIGATION MODE (continuous — DEFAULT, always active):
    - Continuously monitor for hazards: potholes, obstacles, vehicles, people
-   - Only announce CHANGES in the environment — don't repeat yourself
-   - Prioritise safety: nearby vehicles/obstacles first, then informational
+   - PROACTIVELY announce what you see — don't wait to be asked
+   - Alert about approaching objects based on growth rate
+   - Call read_text_in_scene frequently to detect and read signs, labels,
+     building numbers, bus numbers, street names, notices
+   - Only suppress truly REPEATED information — new text or changed position = announce
    - When the user asks for directions, use get_walking_directions
    - When they ask "what's nearby?", use search_nearby_places
+   - Use trigger_haptic_alert for approaching vehicles or imminent obstacles
 
 2. ASSISTANT MODE (on-demand):
    - When the user asks a question (e.g. "What color is that car?",
@@ -148,16 +166,21 @@ Available tools:
   • search_memory — Search for previously seen objects ("Have you seen my keys?")
   • get_environment_context — Get recent detection summary for context
   • trigger_haptic_alert — Alert the user with a haptic vibration for approaching danger
+  • get_time_and_date — Current time and date
+  • get_weather — Weather conditions
+  • identify_colors — Describe colors of objects in view
 
 Behaviour rules:
-  - Be EXTREMELY concise in navigation mode — short, actionable phrases
-  - NEVER repeat the same announcement unless the situation changes
+  - Be PROACTIVE in navigation mode — announce hazards, text, and scene changes
+  - Be EXTREMELY concise — short, actionable phrases like "Car ahead, move left"
+  - NEVER repeat the exact same announcement unless the situation changes
   - Prioritise SAFETY above all else — obstacles and vehicles first
+  - READ TEXT when detected — signs, building names, bus numbers are critical
   - In assistant mode, give fuller answers but still be efficient
-  - When there's no environmental change, stay SILENT
   - When the user speaks, pause announcements and listen
   - Speak in natural, conversational sentences
-  - If the user asks about something you can't see, say so honestly"""
+  - If the user asks about something you can't see, say so honestly
+  - Use trigger_haptic_alert for approaching vehicles and imminent danger"""
 
 
 def _get_instructions() -> str:
@@ -177,11 +200,12 @@ def _build_processors() -> list:
 
     # OCR processor runs in both modes (captures frames for on-demand VLM)
     ocr = OCRProcessor(
-        scan_interval=20.0,   # background OCR scan every 20s
+        scan_interval=8.0,    # background OCR scan every 8s (proactive reading)
         max_cached_results=30,
-        fps=1,                # capture 1 frame/s for OCR buffer
+        fps=2,                # capture 2 frames/s for OCR buffer
     )
     ocr.set_provider_manager(provider_manager)
+    ocr.set_navigation_engine(navigation_engine)
     _active_ocr_processor = ocr
 
     if AGENT_MODE == "signbridge":
@@ -202,7 +226,7 @@ def _build_processors() -> list:
             conf_threshold=0.4,
             model_path="yolo11n.pt",
             device="cpu",
-            scene_summary_interval=10.0,
+            scene_summary_interval=7.0,  # Proactive scene summaries every 7s
         )
         # Day 4: Wire spatial memory and navigation engine
         guidelens.set_spatial_memory(spatial_memory)
@@ -460,6 +484,13 @@ async def create_agent(**kwargs) -> Agent:
         result = await _maps_get_directions(destination)
         # If successful, tell the agent to read the spoken summary
         if result.get("status") == "ok":
+            # Track active route in navigation engine for status UI
+            navigation_engine.set_active_route(
+                destination=result.get("end_address", destination),
+                steps=result.get("steps", []),
+                total_distance=result.get("total_distance", ""),
+                total_duration=result.get("total_duration", ""),
+            )
             return {
                 "status": "ok",
                 "spoken_summary": result.get("spoken_summary", ""),
@@ -898,6 +929,11 @@ if __name__ == "__main__":
     async def nav_summary():
         """Get current navigation engine environment summary."""
         return {"summary": navigation_engine.get_environment_summary()}
+
+    @runner.fast_api.get("/navigation/status")
+    async def nav_status():
+        """Get full navigation status including active route and mode."""
+        return navigation_engine.get_navigation_status()
 
     @runner.fast_api.get("/navigation/hazards")
     async def nav_hazards(since: float = 0):

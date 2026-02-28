@@ -371,6 +371,7 @@ class GuideLensProcessor(VideoProcessorPublisher):
             results = self._model(
                 img,
                 conf=self.conf_threshold,
+                imgsz=320,  # Smaller input -> faster inference, lower latency
                 verbose=False,
                 device=self.device,
             )

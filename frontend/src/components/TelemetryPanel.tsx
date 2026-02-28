@@ -147,8 +147,13 @@ export function TelemetryPanel({ data }: TelemetryPanelProps) {
             <div className="telemetry-section-label">Navigation</div>
             <div className="telemetry-item">
               <span className="telemetry-label">Nav Mode</span>
-              <span className="telemetry-value">
-                {data.navigation.mode}
+              <span className={`telemetry-value ${
+                data.navigation.mode === "navigation" ? "good" : "neutral"
+              }`}>
+                {data.navigation.mode === "navigation" ? "🧭 Active" :
+                 data.navigation.mode === "assistant" ? "💡 Assistant" :
+                 data.navigation.mode === "reading" ? "📖 Reading" :
+                 data.navigation.mode}
               </span>
             </div>
             <div className="telemetry-item">
@@ -161,6 +166,14 @@ export function TelemetryPanel({ data }: TelemetryPanelProps) {
                 {data.navigation.pending_hazards}
               </span>
             </div>
+            {data.navigation.scene_summary && data.navigation.scene_summary !== "The path appears clear." && (
+              <div className="telemetry-item">
+                <span className="telemetry-label">Scene</span>
+                <span className="telemetry-value" style={{ fontSize: "0.6rem", color: "#aaa" }}>
+                  {data.navigation.scene_summary.slice(0, 60)}
+                </span>
+              </div>
+            )}
           </>
         )}
 

@@ -67,10 +67,10 @@ class SmartAnnouncer:
 
     # Cooldown per priority level (seconds)
     COOLDOWN = {
-        Priority.CRITICAL: 3.0,    # Can repeat critical alerts quickly
-        Priority.HIGH: 10.0,
-        Priority.MEDIUM: 30.0,
-        Priority.LOW: 60.0,
+        Priority.CRITICAL: 2.0,    # Can repeat critical alerts quickly
+        Priority.HIGH: 6.0,       # Approaching hazards — faster repeat
+        Priority.MEDIUM: 15.0,    # New objects — announce sooner
+        Priority.LOW: 30.0,       # Informational — still proactive
         Priority.SILENT: float("inf"),
     }
 
@@ -79,7 +79,7 @@ class SmartAnnouncer:
         self._user_speaking = False
         self._user_speaking_until = 0.0
         self._last_announcement_time = 0.0
-        self._min_announcement_gap = 2.0  # min seconds between any announcements
+        self._min_announcement_gap = 1.0  # min seconds between any announcements (proactive)
         self._queue: list[tuple[int, str, str]] = []  # (priority, key, text)
 
     def should_announce(self, key: str, priority: int) -> bool:
@@ -317,6 +317,13 @@ class NavigationEngine:
         self._pending_announcements: list[dict] = []
         self._hazard_alerts: list[dict] = []
 
+        # Active route tracking (for navigation status UI)
+        self._active_route: Optional[dict] = None  # Set when directions are fetched
+        self._navigation_active = False
+        self._destination: str = ""
+        self._route_steps: list[dict] = []
+        self._current_step_index: int = 0
+
     @property
     def mode(self) -> str:
         return self._mode
@@ -427,6 +434,52 @@ class NavigationEngine:
     def on_user_speech_end(self) -> None:
         """Called when user stops speaking — resume announcements."""
         self.announcer.set_user_speaking(False)
+
+    # ------------------------------------------------------------------
+    # Route tracking (for navigation status UI)
+    # ------------------------------------------------------------------
+    def set_active_route(self, destination: str, steps: list[dict],
+                         total_distance: str = "", total_duration: str = "") -> None:
+        """Set an active walking route (from get_walking_directions)."""
+        self._navigation_active = True
+        self._destination = destination
+        self._route_steps = steps
+        self._current_step_index = 0
+        self._active_route = {
+            "destination": destination,
+            "total_distance": total_distance,
+            "total_duration": total_duration,
+            "step_count": len(steps),
+        }
+        logger.info("Navigation route set: %s (%s)", destination, total_distance)
+
+    def clear_route(self) -> None:
+        """Clear the active navigation route."""
+        self._navigation_active = False
+        self._destination = ""
+        self._route_steps = []
+        self._current_step_index = 0
+        self._active_route = None
+        logger.info("Navigation route cleared")
+
+    def get_navigation_status(self) -> dict:
+        """Get full navigation status for frontend UI."""
+        return {
+            "mode": self._mode,
+            "navigation_active": self._navigation_active,
+            "destination": self._destination,
+            "current_step": self._current_step_index,
+            "total_steps": len(self._route_steps),
+            "active_route": self._active_route,
+            "current_instruction": (
+                self._route_steps[self._current_step_index]["instruction"]
+                if self._route_steps and self._current_step_index < len(self._route_steps)
+                else ""
+            ),
+            "scene_summary": self.environment.get_current_summary(),
+            "pending_hazards": len(self._hazard_alerts),
+            "continuous": self._continuous,
+        }
 
     # ------------------------------------------------------------------
     # Formatting

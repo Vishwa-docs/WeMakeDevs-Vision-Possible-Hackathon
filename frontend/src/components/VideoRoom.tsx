@@ -310,8 +310,23 @@ export function VideoRoom({
         console.log("[WorldLens][VideoRoom] join success");
 
         // 5. Enable camera & microphone (best-effort)
+        // Use 480p for lower latency — reduces bandwidth & backend processing
         try {
           await streamCall.camera.enable();
+          // Prefer 480p @ 15fps for lower latency over quality
+          try {
+            const videoTrack = streamCall.camera.state.mediaStream?.getVideoTracks()[0];
+            if (videoTrack) {
+              await videoTrack.applyConstraints({
+                width: { ideal: 640 },
+                height: { ideal: 480 },
+                frameRate: { ideal: 15, max: 20 },
+              });
+              console.log("[WorldLens][VideoRoom] camera constrained to 480p@15fps");
+            }
+          } catch (constraintErr) {
+            console.warn("[WorldLens][VideoRoom] camera constraint failed", constraintErr);
+          }
           console.log("[WorldLens][VideoRoom] camera enabled");
         } catch (e) {
           console.warn("[WorldLens][VideoRoom] camera enable failed", e);
