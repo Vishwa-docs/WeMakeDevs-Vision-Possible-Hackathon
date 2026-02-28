@@ -170,7 +170,7 @@ function CallUI({ onLeave }: { onLeave?: () => void }) {
 
   return (
     <div className="call-ui">
-      {/* Main video area */}
+      {/* Main video area — side by side: AI (large) + You (small) */}
       <div className="video-grid">
         {!hasAnyVideoParticipant && (
           <div
@@ -180,7 +180,18 @@ function CallUI({ onLeave }: { onLeave?: () => void }) {
             <span>Joining call… waiting for camera/participants.</span>
           </div>
         )}
-        {/* Local camera (user) */}
+
+        {/* Remote participants (agent AI video) — main large view */}
+        {remoteParticipants.map((p) => (
+          <div key={p.sessionId} className="video-tile remote">
+            <ParticipantView participant={p} trackType="videoTrack" />
+            <span className="video-label">
+              {p.name || p.userId || "WorldLens AI"}
+            </span>
+          </div>
+        ))}
+
+        {/* Local camera (user) — small picture-in-picture */}
         {localParticipant && (
           <div className="video-tile local">
             <ParticipantView
@@ -190,33 +201,18 @@ function CallUI({ onLeave }: { onLeave?: () => void }) {
             <span className="video-label">You</span>
           </div>
         )}
-
-        {/* Remote participants (agent video tracks) */}
-        {remoteParticipants.map((p) => (
-          <div key={p.sessionId} className="video-tile remote">
-            <ParticipantView participant={p} trackType="videoTrack" />
-            <span className="video-label">
-              {p.name || p.userId || "WorldLens Agent"}
-            </span>
-          </div>
-        ))}
       </div>
 
-      {/* Play remote participants' audio (agent voice) —
-           manual <audio> elements instead of ParticipantsAudio to avoid
-           the SDK's internal participants.map crash */}
+      {/* Play remote participants' audio (agent voice) */}
       {remoteParticipants.map((p) => (
         <RemoteAudio key={`audio-${p.sessionId}`} participant={p} />
       ))}
 
       {/* Controls */}
       <div className="call-controls">
-        <button className="btn btn-danger" onClick={onLeave}>
-          Leave Call
+        <button className="btn btn-danger btn-end-session" onClick={onLeave}>
+          End Session
         </button>
-        <span className="participant-count">
-          {participants.length} participant{participants.length !== 1 ? "s" : ""}
-        </span>
       </div>
     </div>
   );

@@ -6,17 +6,17 @@ import type { TelemetryData } from "../types";
 
 interface TelemetryPanelProps {
   data: TelemetryData;
+  mode?: string;
 }
 
-export function TelemetryPanel({ data }: TelemetryPanelProps) {
+export function TelemetryPanel({ data, mode }: TelemetryPanelProps) {
   const agg = data.aggregate;
   const hasReal = agg !== undefined; // true once real data arrives
+  const isSignBridge = mode === "signbridge";
 
   return (
     <div className="telemetry-panel">
-      <h3>
-        Telemetry <span className="telemetry-live-dot" />
-      </h3>
+
       <div className="telemetry-grid">
         {/* ─── Core ─── */}
         <div className="telemetry-section-label">Core</div>
@@ -65,23 +65,27 @@ export function TelemetryPanel({ data }: TelemetryPanelProps) {
               </span>
             </div>
 
-            <div className="telemetry-item highlight">
-              <span className="telemetry-label">Objects Detected</span>
-              <span className="telemetry-value good">
-                {(agg.total_objects_detected ?? 0).toLocaleString()}
-              </span>
-            </div>
+            {!isSignBridge && (
+              <div className="telemetry-item highlight">
+                <span className="telemetry-label">Objects Detected</span>
+                <span className="telemetry-value good">
+                  {(agg.total_objects_detected ?? 0).toLocaleString()}
+                </span>
+              </div>
+            )}
 
-            <div className="telemetry-item warn">
-              <span className="telemetry-label">Hazards Detected</span>
-              <span
-                className={`telemetry-value ${
-                  (agg.total_hazards_detected ?? 0) > 0 ? "warn" : "good"
-                }`}
-              >
-                {agg.total_hazards_detected ?? 0}
-              </span>
-            </div>
+            {!isSignBridge && (
+              <div className="telemetry-item warn">
+                <span className="telemetry-label">Hazards Detected</span>
+                <span
+                  className={`telemetry-value ${
+                    (agg.total_hazards_detected ?? 0) > 0 ? "warn" : "good"
+                  }`}
+                >
+                  {agg.total_hazards_detected ?? 0}
+                </span>
+              </div>
+            )}
 
             <div className="telemetry-item">
               <span className="telemetry-label">Gestures</span>
@@ -90,34 +94,21 @@ export function TelemetryPanel({ data }: TelemetryPanelProps) {
               </span>
             </div>
 
-            <div className="telemetry-item">
-              <span className="telemetry-label">OCR Calls</span>
-              <span className="telemetry-value neutral">
-                {agg.total_ocr_calls ?? 0}
-              </span>
-            </div>
+            {!isSignBridge && (
+              <div className="telemetry-item">
+                <span className="telemetry-label">OCR Calls</span>
+                <span className="telemetry-value neutral">
+                  {agg.total_ocr_calls ?? 0}
+                </span>
+              </div>
+            )}
           </>
         )}
 
-        {/* ─── Providers ─── */}
-        {data.providers && (
-          <>
-            <div className="telemetry-section-label">Providers</div>
-            <div className="telemetry-item">
-              <span className="telemetry-label">Preferred</span>
-              <span className="telemetry-value">{data.providers.preferred}</span>
-            </div>
-            <div className="telemetry-item">
-              <span className="telemetry-label">Chain</span>
-              <span className="telemetry-value" style={{ fontSize: "0.65rem" }}>
-                {data.providers.chain?.join(" → ") || "—"}
-              </span>
-            </div>
-          </>
-        )}
+
 
         {/* ─── Memory ─── */}
-        {data.memory && (
+        {!isSignBridge && data.memory && (
           <>
             <div className="telemetry-section-label">Spatial Memory</div>
             <div className="telemetry-item">
@@ -142,7 +133,7 @@ export function TelemetryPanel({ data }: TelemetryPanelProps) {
         )}
 
         {/* ─── Navigation ─── */}
-        {data.navigation && (
+        {!isSignBridge && data.navigation && (
           <>
             <div className="telemetry-section-label">Navigation</div>
             <div className="telemetry-item">

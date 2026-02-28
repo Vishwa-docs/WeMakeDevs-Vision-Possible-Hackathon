@@ -11,7 +11,7 @@
   font-weight: 400;
   color-scheme: dark;
   color: #e0e0e0;
-  background-color: #0a0a0f;
+  background-color: #0c0c14;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -41,5 +41,5 @@ a:hover {
 
 /* Stream Video SDK overrides */
 .str-video {
-  --str-video__background-color: #0a0a0f !important;
+  --str-video__background-color: #080810 !important;
 }

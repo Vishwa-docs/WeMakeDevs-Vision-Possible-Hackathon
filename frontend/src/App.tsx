@@ -10,14 +10,12 @@ import { VideoRoom } from "./components/VideoRoom";
 import { ChatLog } from "./components/ChatLog";
 import { TelemetryPanel } from "./components/TelemetryPanel";
 import { AlertOverlay } from "./components/AlertOverlay";
-import { ProviderSelector } from "./components/ProviderSelector";
 import { Avatar3D } from "./components/Avatar3D";
 import { OCROverlay } from "./components/OCROverlay";
 import { NavigationStatus } from "./components/NavigationStatus";
 import { ToastContainer, useToasts } from "./components/Toast";
 import { getTranscript, clearTranscript, getTelemetry, pollHazardAlerts } from "./utils/api";
 import type { TranscriptEntry, TelemetryData, HazardAlert } from "./types";
-import type { FallbackEvent } from "./utils/api";
 import "./App.css";
 
 // ---------------------------------------------------------------------------
@@ -103,18 +101,6 @@ function App() {
   } = useAgentSession();
   const [modeMessage, setModeMessage] = useState<string | null>(null);
   const { toasts, addToast, dismissToast } = useToasts();
-
-  // Handle provider fallback events → show toast
-  const handleFallbackToast = useCallback(
-    (event: FallbackEvent) => {
-      addToast(
-        `Provider ${event.original} failed (${event.reason}). Switched to ${event.fallback}.`,
-        "warning",
-        6000
-      );
-    },
-    [addToast]
-  );
 
   const [callId, setCallId] = useState(`worldlens-${Date.now()}`);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
@@ -319,30 +305,26 @@ function App() {
   return (
     <div className="app">
       {/* Alert overlay for hazard warnings (Day 5: real hazard alerts) */}
-      <AlertOverlay
-        active={alertActive}
-        alert={currentAlert}
-        message={currentAlert?.text || "Obstacle detected!"}
-        direction={currentAlert?.direction}
-      />
+      {status.mode !== "signbridge" && (
+        <AlertOverlay
+          active={alertActive}
+          alert={currentAlert}
+          message={currentAlert?.text || "Obstacle detected!"}
+          direction={currentAlert?.direction}
+        />
+      )}
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
       {/* Header */}
       <header className="app-header">
         <div className="logo">
           <h1>🌍 WorldLens</h1>
-          <span className="tagline">
-            {status.mode === "signbridge"
-              ? "Sign Language Translation"
-              : "Environmental Awareness"}
-          </span>
         </div>
         <StatusBar
           status={status}
           onToggleMode={handleToggleMode}
           sessionActive={!!session}
         />
-        <ProviderSelector onFallbackToast={handleFallbackToast} />
       </header>
 
       {/* Mode switch notification */}
@@ -356,14 +338,12 @@ function App() {
           /* Landing / connect screen */
           <div className="landing">
             <div className="landing-card">
-              <div className="landing-hero-icon">🌍</div>
               <h2>WorldLens</h2>
               <p className="landing-subtitle">
                 AI-Powered Assistive Vision Platform
               </p>
               <p className="landing-desc">
-                Dual-mode assistive vision powered by Vision Agents SDK,
-                Gemini 2.5 Flash Realtime, and GetStream Edge.
+                Dual-mode assistive vision platform for environmental awareness and sign language translation.
               </p>
 
               {/* Mode cards */}
@@ -451,15 +431,7 @@ function App() {
                 Opens camera &amp; microphone to connect with WorldLens AI.
               </p>
 
-              {/* Feature badges */}
-              <div className="feature-badges">
-                <span className="feature-badge">🧠 Gemini 2.5 Flash</span>
-                <span className="feature-badge">📹 Real-time Video</span>
-                <span className="feature-badge">🗣️ Voice AI</span>
-                <span className="feature-badge">🗺️ Google Maps</span>
-                <span className="feature-badge">🔍 YOLO Detection</span>
-                <span className="feature-badge">✋ MediaPipe</span>
-              </div>
+
             </div>
           </div>
         ) : (
@@ -472,7 +444,9 @@ function App() {
                 callId={session.call_id || callId}
                 onLeave={handleStop}
               />
-              <OCROverlay active={!!session} pollInterval={3000} />
+              {status.mode !== "signbridge" && (
+                <OCROverlay active={!!session} pollInterval={3000} />
+              )}
               {status.mode === "guidelens" && (
                 <NavigationStatus active={!!session} pollInterval={2000} />
               )}
@@ -514,7 +488,7 @@ function App() {
                     <span className="live-dot" /> LIVE
                   </span>
                 </div>
-                <TelemetryPanel data={telemetry} />
+                <TelemetryPanel data={telemetry} mode={status.mode} />
               </div>
             </aside>
           </div>
