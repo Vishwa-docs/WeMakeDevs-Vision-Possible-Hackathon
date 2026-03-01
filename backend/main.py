@@ -297,7 +297,7 @@ def _build_processors() -> list:
         return [signbridge]
     else:
         ocr = OCRProcessor(
-            scan_interval=8.0,    # background OCR scan every 8s (proactive reading)
+            scan_interval=4.0,    # background OCR scan every 4s (proactive reading)
             max_cached_results=30,
             fps=2,                # capture 2 frames/s for OCR buffer
         )
@@ -310,7 +310,7 @@ def _build_processors() -> list:
             conf_threshold=0.4,
             model_path="yolo11n.pt",
             device="cpu",
-            scene_summary_interval=7.0,  # Proactive scene summaries every 7s
+            scene_summary_interval=3.0,  # Proactive scene summaries every 3s
         )
         # Day 4: Wire spatial memory and navigation engine
         guidelens.set_spatial_memory(spatial_memory)
@@ -528,6 +528,12 @@ async def create_agent(**kwargs) -> Agent:
                     f"Say this translation out loud naturally."
                 )
 
+    # --- Cooldown tracking for proactive commentary --------------------------
+    _last_scene_response_time: float = 0.0
+    _SCENE_RESPONSE_COOLDOWN: float = 3.0  # min seconds between scene summaries fed to agent
+    _last_hazard_response_time: float = 0.0
+    _HAZARD_RESPONSE_COOLDOWN: float = 2.0  # min seconds between hazard alerts fed to agent
+
     @agent.events.subscribe
     async def on_object_detected(event: ObjectDetectedEvent):
         if event.objects:
@@ -539,6 +545,7 @@ async def create_agent(**kwargs) -> Agent:
 
     @agent.events.subscribe
     async def on_hazard_detected(event: HazardDetectedEvent):
+        nonlocal _last_hazard_response_time
         logger.warning(
             "⚠️ HAZARD: %s [%s, %s] — growth %.3f/s",
             event.hazard_type,
@@ -546,14 +553,62 @@ async def create_agent(**kwargs) -> Agent:
             event.direction,
             event.growth_rate,
         )
+        # Feed hazard to agent for IMMEDIATE TTS — real-time hazard alerts
+        if AGENT_MODE == "guidelens":
+            now = time.time()
+            if now - _last_hazard_response_time >= _HAZARD_RESPONSE_COOLDOWN:
+                _last_hazard_response_time = now
+                approach_note = ""
+                if event.growth_rate > 0.03:
+                    approach_note = " and approaching quickly"
+                try:
+                    await agent.simple_response(
+                        f"[HAZARD ALERT] {event.hazard_type} detected "
+                        f"{event.distance_estimate} to the {event.direction}"
+                        f"{approach_note}. Alert the user immediately about "
+                        f"this hazard in a short, urgent sentence."
+                    )
+                except Exception as e:
+                    logger.debug("Hazard TTS error: %s", e)
 
     @agent.events.subscribe
     async def on_scene_summary(event: SceneSummaryEvent):
+        nonlocal _last_scene_response_time
         logger.info("📸 %s", event.summary)
+        # Feed scene summary to agent for proactive TTS commentary every 3s
+        if AGENT_MODE == "guidelens" and event.summary:
+            now = time.time()
+            if now - _last_scene_response_time >= _SCENE_RESPONSE_COOLDOWN:
+                _last_scene_response_time = now
+                # Get navigation engine summary for richer context
+                nav_summary = navigation_engine.get_environment_summary()
+                context = nav_summary if nav_summary != "The path appears clear." else event.summary
+                try:
+                    await agent.simple_response(
+                        f"[SCENE UPDATE] Current detections: {context}. "
+                        f"Describe what you see to the user in 1-2 short, "
+                        f"natural sentences. Focus on people, obstacles, "
+                        f"and anything the user should know about."
+                    )
+                except Exception as e:
+                    logger.debug("Scene TTS error: %s", e)
 
     @agent.events.subscribe
     async def on_ocr_result(event: OCRResultEvent):
         logger.info("📝 OCR [%s]: %s", event.provider, event.text[:100])
+        # Feed significant OCR text to agent for TTS
+        if AGENT_MODE == "guidelens" and event.text:
+            text_lower = event.text.strip().lower()
+            # Skip empty/trivial results
+            if text_lower and text_lower != "none" and "no text" not in text_lower and len(text_lower) > 3:
+                try:
+                    await agent.simple_response(
+                        f"[TEXT DETECTED] I can see the following text: "
+                        f"\"{event.text[:200]}\". Read this text out loud "
+                        f"to the user naturally and briefly."
+                    )
+                except Exception as e:
+                    logger.debug("OCR TTS error: %s", e)
 
     @agent.events.subscribe
     async def on_scene_description(event: SceneDescriptionEvent):

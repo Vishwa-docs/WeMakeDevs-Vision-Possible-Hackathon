@@ -67,10 +67,10 @@ class SmartAnnouncer:
 
     # Cooldown per priority level (seconds)
     COOLDOWN = {
-        Priority.CRITICAL: 2.0,    # Can repeat critical alerts quickly
-        Priority.HIGH: 4.0,       # Approaching hazards — faster repeat
-        Priority.MEDIUM: 8.0,     # New objects — announce frequently
-        Priority.LOW: 15.0,       # Informational — still proactive
+        Priority.CRITICAL: 1.5,    # Can repeat critical alerts quickly
+        Priority.HIGH: 3.0,       # Approaching hazards — faster repeat
+        Priority.MEDIUM: 5.0,     # New objects — announce frequently (3s cycle)
+        Priority.LOW: 10.0,       # Informational — still proactive
         Priority.SILENT: float("inf"),
     }
 
@@ -429,7 +429,7 @@ class NavigationEngine:
 
     def on_user_speech(self) -> None:
         """Called when user starts speaking — suppress non-critical announcements."""
-        self.announcer.set_user_speaking(True, duration=5.0)
+        self.announcer.set_user_speaking(True, duration=2.0)
 
     def on_user_speech_end(self) -> None:
         """Called when user stops speaking — resume announcements."""

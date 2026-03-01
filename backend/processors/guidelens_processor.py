@@ -212,6 +212,18 @@ class GuideLensProcessor(VideoProcessorPublisher):
         try:
             from ultralytics import YOLO
 
+            # Auto-detect best available device for faster inference
+            actual_device = self.device
+            if self.device == "cpu":
+                try:
+                    import torch
+                    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                        actual_device = "mps"
+                        logger.info("Apple Metal (MPS) detected — using GPU acceleration")
+                except ImportError:
+                    pass
+
+            self.device = actual_device
             logger.info(
                 "Loading YOLO detection model: %s (device: %s)",
                 self.model_path,
@@ -373,7 +385,7 @@ class GuideLensProcessor(VideoProcessorPublisher):
             results = self._model(
                 img,
                 conf=self.conf_threshold,
-                imgsz=320,  # Smaller input -> faster inference, lower latency
+                imgsz=256,   # Smaller input -> faster inference, lower latency
                 verbose=False,
                 device=self.device,
             )

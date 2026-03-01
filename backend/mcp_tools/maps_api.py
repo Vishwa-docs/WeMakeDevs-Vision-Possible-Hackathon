@@ -28,7 +28,9 @@ import httpx
 
 logger = logging.getLogger("mcp.maps")
 
-MAPS_API_KEY = os.getenv("MAPS_API_KEY", "")
+# NOTE: Do NOT read the API key at module level — load_dotenv() in main.py
+# runs AFTER this module is imported, so os.getenv() would return "".
+# Use _get_api_key() at call time instead.
 DIRECTIONS_URL = "https://maps.googleapis.com/maps/api/directions/json"
 GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 PLACES_NEARBY_URL = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
@@ -198,9 +200,15 @@ def get_maps_quota_status() -> dict:
     }
 
 
+def _get_api_key() -> str:
+    """Read the Maps API key at call time (after load_dotenv)."""
+    return os.getenv("MAPS_API_KEY", "")
+
+
 def _has_valid_key() -> bool:
     """Check if a valid Maps API key is configured."""
-    return bool(MAPS_API_KEY) and not MAPS_API_KEY.startswith("your_")
+    key = _get_api_key()
+    return bool(key) and not key.startswith("your_")
 
 
 def _clean_html(html_text: str) -> str:
@@ -247,8 +255,10 @@ async def get_walking_directions(
         Dict with route summary, step-by-step directions, and metadata.
     """
     if not _has_valid_key():
-        logger.warning("MAPS_API_KEY not set — using local route data")
+        logger.warning("MAPS_API_KEY not set or invalid — using local route data")
         return _stub_directions(destination)
+
+    logger.info("Maps API key found — will use live Google Maps Directions API")
 
     # Check known local routes first (e.g. B7→B9 on campus)
     known = _check_known_route(origin, destination)
@@ -289,7 +299,7 @@ async def get_walking_directions(
                     "origin": actual_origin,
                     "destination": destination,
                     "mode": "walking",
-                    "key": MAPS_API_KEY,
+                    "key": _get_api_key(),
                     "language": "en",
                 },
             )
@@ -415,7 +425,7 @@ async def search_nearby_places(
                     "query": place_type,
                     "location": f"{lat},{lng}",
                     "radius": radius,
-                    "key": MAPS_API_KEY,
+                    "key": _get_api_key(),
                 },
             )
             data = resp.json()
@@ -485,7 +495,7 @@ async def get_current_location_info() -> dict:
                     GEOCODE_URL,
                     params={
                         "latlng": f"{geo['lat']},{geo['lng']}",
-                        "key": MAPS_API_KEY,
+                        "key": _get_api_key(),
                     },
                 )
                 data = resp.json()
@@ -548,7 +558,7 @@ async def _geocode(address: str) -> Optional[dict]:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.get(
                 GEOCODE_URL,
-                params={"address": address, "key": MAPS_API_KEY},
+                params={"address": address, "key": _get_api_key()},
             )
             data = resp.json()
             if data.get("status") == "OK" and data.get("results"):
@@ -569,7 +579,7 @@ async def _geolocate_ip() -> Optional[dict]:
                 if ok:
                     _record_call("geolocation")
                     resp = await client.post(
-                        f"{GEOLOCATE_URL}?key={MAPS_API_KEY}",
+                        f"{GEOLOCATE_URL}?key={_get_api_key()}",
                         json={"considerIp": True},
                     )
                     if resp.status_code == 200:

@@ -419,7 +419,7 @@ class OCRProcessor(VideoProcessor):
             return self._latest_frame.copy()
 
     @staticmethod
-    def _frame_to_jpeg(img: np.ndarray, quality: int = 85) -> bytes:
+    def _frame_to_jpeg(img: np.ndarray, quality: int = 70) -> bytes:
         """Convert an RGB numpy array to JPEG bytes."""
         bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
         _, buf = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, quality])
