@@ -82,8 +82,10 @@ export function ProviderSelector({ onFallbackToast }: Props) {
   const handleSelect = async (providerId: string) => {
     setLoading(true);
     try {
-      const s = await setPreferredProvider(providerId);
-      setStatus(s);
+      await setPreferredProvider(providerId);
+      // Re-fetch full status (includes health) instead of using the POST
+      // response, which omits the health field
+      await fetchStatus();
     } catch {
       // ignore
     } finally {

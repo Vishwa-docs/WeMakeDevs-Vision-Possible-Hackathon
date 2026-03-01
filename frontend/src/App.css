@@ -485,6 +485,15 @@
   background: #0a0a0f;
 }
 
+/* Fix zoomed-in video: Stream SDK defaults to object-fit: cover which crops.
+   Use contain so the full frame is visible (important for object detection overlay). */
+.video-tile video,
+.video-tile .str-video__participant-view video,
+.str-video__participant-view video {
+  object-fit: contain !important;
+  background: #000;
+}
+
 .video-tile.local {
   max-height: 200px;
 }
@@ -1105,11 +1114,7 @@
   color: #666;
 }
 
-/* --- Video Area with OCR overlay --- */
-.video-area {
-  position: relative;
-  flex: 1;
-}
+/* --- Video Area with OCR overlay (extends .video-area from session layout) --- */
 
 /* --- Session layout update for avatar --- */
 .sidebar {

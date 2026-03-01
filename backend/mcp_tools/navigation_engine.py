@@ -68,9 +68,9 @@ class SmartAnnouncer:
     # Cooldown per priority level (seconds)
     COOLDOWN = {
         Priority.CRITICAL: 2.0,    # Can repeat critical alerts quickly
-        Priority.HIGH: 6.0,       # Approaching hazards — faster repeat
-        Priority.MEDIUM: 15.0,    # New objects — announce sooner
-        Priority.LOW: 30.0,       # Informational — still proactive
+        Priority.HIGH: 4.0,       # Approaching hazards — faster repeat
+        Priority.MEDIUM: 8.0,     # New objects — announce frequently
+        Priority.LOW: 15.0,       # Informational — still proactive
         Priority.SILENT: float("inf"),
     }
 
@@ -79,7 +79,7 @@ class SmartAnnouncer:
         self._user_speaking = False
         self._user_speaking_until = 0.0
         self._last_announcement_time = 0.0
-        self._min_announcement_gap = 1.0  # min seconds between any announcements (proactive)
+        self._min_announcement_gap = 0.5  # min seconds between any announcements (proactive)
         self._queue: list[tuple[int, str, str]] = []  # (priority, key, text)
 
     def should_announce(self, key: str, priority: int) -> bool:
@@ -120,7 +120,7 @@ class SmartAnnouncer:
             )
         self._last_announcement_time = now
 
-    def set_user_speaking(self, speaking: bool, duration: float = 3.0) -> None:
+    def set_user_speaking(self, speaking: bool, duration: float = 2.0) -> None:
         """Mark user as speaking (suppress non-critical announcements)."""
         self._user_speaking = speaking
         if speaking:

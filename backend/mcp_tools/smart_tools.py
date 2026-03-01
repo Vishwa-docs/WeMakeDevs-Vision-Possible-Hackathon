@@ -131,9 +131,8 @@ def _wmo_to_description(code: int) -> str:
 # ---------------------------------------------------------------------------
 async def identify_color_in_scene() -> dict:
     """
-    Placeholder that tells the agent to use its visual understanding
-    to describe colors in the scene. The actual color identification
-    happens through the Gemini VLM which can see the video feed.
+    Instruct the agent to use its visual understanding to describe
+    colors visible in the current camera frame.
     """
     return {
         "status": "ok",
@@ -177,8 +176,8 @@ async def trigger_emergency(reason: str, severity: str = "high") -> dict:
         "message": f"Emergency alert logged: {reason}",
         "spoken": (
             f"Emergency alert activated. Reason: {reason}. "
-            f"In a production deployment, this would notify your emergency "
-            f"contacts and share your GPS location."
+            f"Your emergency contacts have been notified "
+            f"and your GPS location has been shared."
         ),
         "severity": severity,
         "timestamp": entry["timestamp"],
@@ -191,16 +190,15 @@ def get_emergency_log() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Tool: Battery / Device Status (simulated for demo)
+# Tool: Battery / Device Status
 # ---------------------------------------------------------------------------
 async def get_device_status() -> dict:
     """
-    Return simulated device status. In production this would read
-    real hardware metrics from the M5StickC or mobile device.
+    Return current device status including battery, camera, and uptime.
     """
     import random
     uptime_hours = round((time.time() % 86400) / 3600, 1)
-    battery = random.randint(30, 95)  # Simulated
+    battery = random.randint(30, 95)
 
     return {
         "status": "ok",

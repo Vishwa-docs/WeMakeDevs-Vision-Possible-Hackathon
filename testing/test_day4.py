@@ -1,7 +1,7 @@
 """
-Day 4 unit tests — SpatialMemory (SQLite), NavigationEngine, Maps API stubs.
+Day 4 unit tests — SpatialMemory (SQLite), NavigationEngine, Maps API.
 
-Run:  python -m pytest tests/test_day4.py -v
+Run:  python -m pytest testing/test_day4.py -v
 """
 
 import asyncio
@@ -10,6 +10,8 @@ import tempfile
 import time
 
 import pytest
+
+# Backend dir is added by conftest.py
 
 # ---------------------------------------------------------------------------
 # SpatialMemory tests
@@ -243,20 +245,20 @@ def test_nav_engine_user_speech_suppression(nav_engine: NavigationEngine):
 
 
 # ---------------------------------------------------------------------------
-# Maps API tests (stub mode — no API key)
+# Maps API tests (no API key)
 # ---------------------------------------------------------------------------
 from mcp_tools.maps_api import get_walking_directions, search_nearby_places
 
 
 @pytest.mark.asyncio
-async def test_maps_stub_directions():
-    """Without MAPS_API_KEY, should still return a graceful stub response."""
+async def test_maps_directions_without_key():
+    """Without MAPS_API_KEY, should still return a graceful response."""
     original = os.environ.get("MAPS_API_KEY")
     os.environ.pop("MAPS_API_KEY", None)
 
     result = await get_walking_directions("Times Square")
     assert isinstance(result, dict)
-    # Should either be an error or stub, not crash
+    # Should return useful data or error, not crash
     assert "status" in result or "error" in result or "spoken_summary" in result
 
     if original:
@@ -264,7 +266,7 @@ async def test_maps_stub_directions():
 
 
 @pytest.mark.asyncio
-async def test_maps_stub_nearby():
+async def test_maps_nearby_without_key():
     """Without MAPS_API_KEY, search_nearby_places should not crash."""
     original = os.environ.get("MAPS_API_KEY")
     os.environ.pop("MAPS_API_KEY", None)

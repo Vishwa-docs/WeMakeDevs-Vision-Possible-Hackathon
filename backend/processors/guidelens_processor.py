@@ -203,6 +203,7 @@ class GuideLensProcessor(VideoProcessorPublisher):
         self._total_inference_time = 0.0
         self._inference_count = 0
         self._start_time = time.time()
+        self._last_frame_width = 640  # default until first frame arrives
 
         self._load_model()
 
@@ -305,6 +306,7 @@ class GuideLensProcessor(VideoProcessorPublisher):
             img = frame.to_ndarray(format="rgb24")
             h, w = img.shape[:2]
             frame_area = float(h * w)
+            self._last_frame_width = w
 
             if self._model is not None:
                 t_inference_start = time.time()
@@ -570,13 +572,13 @@ class GuideLensProcessor(VideoProcessorPublisher):
     # ------------------------------------------------------------------
     @staticmethod
     def _estimate_direction(center_x: float, frame_width: int) -> str:
-        """Estimate object direction from horizontal bbox centre."""
+        """Estimate object direction from horizontal bbox center."""
         ratio = center_x / frame_width if frame_width > 0 else 0.5
         if ratio < 0.33:
             return "left"
         elif ratio > 0.66:
             return "right"
-        return "centre"
+        return "center"
 
     @staticmethod
     def _estimate_distance(area_ratio: float) -> str:
@@ -594,7 +596,13 @@ class GuideLensProcessor(VideoProcessorPublisher):
         """Store detections locally and sync to spatial memory."""
         enriched = []
         for d in detections:
-            direction = self._estimate_direction(d["center_x"], 1)
+            # Use the bbox center_x relative to the horizontal extent
+            # of the bounding box's image. We approximate frame_width from
+            # the detection's bbox (x2 gives us a lower-bound). A more
+            # precise value is passed from _process_frame.
+            direction = self._estimate_direction(
+                d["center_x"], self._last_frame_width
+            )
             distance = self._estimate_distance(d["area_ratio"])
             enriched.append({
                 "class": d["class"],

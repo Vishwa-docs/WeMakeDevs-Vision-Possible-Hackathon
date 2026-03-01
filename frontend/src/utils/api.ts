@@ -279,7 +279,13 @@ export async function pollHazardAlerts(
       `${BACKEND_URL}/navigation/hazards/poll?since=${since}`
     );
     if (!res.ok) return { alerts: [], since, count: 0 };
-    return res.json();
+    const data = await res.json();
+    // Backend returns { hazards: [...], count: N } — map to frontend schema
+    return {
+      alerts: data.hazards || data.alerts || [],
+      since,
+      count: data.count || 0,
+    };
   } catch {
     return { alerts: [], since, count: 0 };
   }

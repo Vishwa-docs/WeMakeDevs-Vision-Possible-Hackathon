@@ -5,15 +5,7 @@
  * overlay on top of the video feed. Results fade out after a timeout.
  */
 import { useState, useEffect, useRef } from "react";
-import { getOCRResults } from "../utils/api";
-
-interface OCRResult {
-  text: string;
-  provider: string;
-  timestamp: number;
-  source?: string;
-  frame_number?: number;
-}
+import { getOCRResults, type OCRResult } from "../utils/api";
 
 interface OCROverlayProps {
   /** Whether to actively poll for results */
@@ -111,4 +103,4 @@ function formatAge(seconds: number): string {
   return `${Math.round(seconds / 60)}m ago`;
 }
 
-export default OCROverlay;
+

@@ -1,1 +1,0 @@
-# WorldLens Backend Test Suite
