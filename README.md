@@ -17,6 +17,7 @@
 
 ## Links
 Blog : https://dev.to/jackbright/i-built-a-real-time-ai-vision-assistant-in-1-week-heres-what-i-learned-about-multimodal-ai-232i
+
 YouTube Video Link : https://youtu.be/tTXSBbH7TDA
 
 ## Table of Contents
