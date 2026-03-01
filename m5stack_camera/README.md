@@ -1,6 +1,9 @@
 # M5Stack K210 Camera — GuideLens On-Device Navigation
 # =====================================================
 
+> **NOTE** : I had this camera on me and hence had the idea of using it. It works fine without the camera and just using a webcam as well.
+
+
 This folder contains everything needed to flash the M5Stack UnitV K210
 camera for **standalone GuideLens navigation** mode.
 

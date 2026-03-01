@@ -86,10 +86,7 @@ main.py                          # Entry point — Agent + AgentLauncher + Runne
 │
 ├── utils/
 │   └── local_storage.py         # Frame snapshots, detection cache, session mgmt
-│
-└── tests/
-    ├── test_day4.py             # 14 tests — spatial memory, maps, navigation
-    └── test_day5.py             # 10 tests — haptic alerts, telemetry, emergency
+
 ```
 
 ---

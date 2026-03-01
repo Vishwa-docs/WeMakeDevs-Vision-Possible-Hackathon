@@ -4,9 +4,9 @@
 
 WorldLens is a real-time assistive vision platform with three main layers:
 
-1. **Edge Device** — Camera capture (webcam, phone, or M5Stack K210 with on-device YOLO v2 tiny)
-2. **Backend** — Vision Agents SDK orchestrating YOLO11 detection, MediaPipe hands, multi-VLM OCR, Gemini 2.5 Flash Realtime reasoning, and 12 MCP tools
-3. **Frontend** — React 19 SPA with WebRTC video, hazard alerts, 3D avatar, and telemetry
+1. **Backend** — Vision Agents SDK orchestrating YOLO11 detection, MediaPipe hands, multi-VLM OCR, Gemini 2.5 Flash Realtime reasoning, and 12 MCP tools
+2. **Frontend** — React 19 SPA with WebRTC video, hazard alerts, 3D avatar, and telemetry
+3. **Edge Device** (Optional) — Camera capture (webcam, phone, or M5Stack K210 with on-device YOLO v2 tiny) - Requires M5Stick
 
 All layers communicate via GetStream's Edge Network (WebRTC) for real-time video/audio, and REST polling for alerts, telemetry, and OCR.
 
@@ -161,7 +161,6 @@ flowchart LR
 | Component | Technology | Details |
 |-----------|-----------|---------|
 | **Webcam / Phone Camera** | WebRTC via GetStream | Primary input — any browser camera works |
-| **M5Stack UnitV K210** | RISC-V + KPU | On-device YOLO v2 tiny (20 classes, ~15 FPS), sends JPEG frames + JSON detections via USB serial to host bridge |
 | **Camera Bridge** | `m5_bridge.py` | Converts RTSP/MJPEG/serial streams into VideoForwarder frames for the SDK |
 
 ### Backend Processing Layer

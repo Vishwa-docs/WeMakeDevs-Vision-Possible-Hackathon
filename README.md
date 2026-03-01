@@ -2,7 +2,7 @@
 
 > For **466 million** people with disabling hearing loss and **43 million** with visual impairment, _"What did you say?"_ and _"What's in front of me?"_ are not small questions. They are daily barriers.
 
-**WorldLens** is an autonomous, real-time assistive vision platform that turns a camera feed into an intelligent companion — one that can see, speak, navigate, and translate sign language. Built as a dual-mode system, it powers two distinct personas:
+**WorldLens** is an autonomous, real-time assistive vision platform that turns a camera feed into an intelligent companion — one that can see, speak, navigate, and translate. Built as a dual-mode system, it powers two distinct personas:
 
 - **👁️ GuideLens** — A walking navigation and environmental awareness assistant for visually impaired users. It sees what's in front of them, reads signs, warns about hazards, gives turn-by-turn directions, and describes the world — all through natural voice conversation.
 - **🤟 SignBridge** — A real-time sign language translation bridge using YOLO11 Pose estimation and MediaPipe hand tracking to interpret ASL finger-spelling and gestures into spoken English. _(Prototype stage — see Future Plans)_
@@ -11,6 +11,7 @@
 
 > **Note:** Architecture and idea were designed by me. Used AI for code generation (Perplexity + GitHub Copilot) as coding and refinement agents.
 
+> **Note on SignBridge** - I initially planned to make it as an app and planned features such as lip reading to audio and vibration when a person's name is called, but due to the time duration of the hackathon, choose to skip this. Will add it in a future update.
 ---
 
 ## Table of Contents
@@ -18,21 +19,20 @@
 - [How It Works](#how-it-works)
 - [Architecture](#architecture)
 - [Tech Stack](#tech-stack)
+- [Vision Agents SDK Integration](#vision-agents-sdk-integration)
+- [Docker Deployment](#docker-deployment)
+- [Local Setup Guide](#local-setup-guide)
+- [API Keys](#api-keys)
 - [GuideLens — Navigation Mode](#guidelens--navigation-mode)
 - [SignBridge — Sign Language Mode](#signbridge--sign-language-mode)
 - [MCP Tools (Model Context Protocol)](#mcp-tools-model-context-protocol)
 - [M5Stack K210 Camera (Edge Device)](#m5stack-k210-camera-edge-device)
-- [Local Setup Guide](#local-setup-guide)
-- [Docker Deployment](#docker-deployment)
-- [API Keys](#api-keys)
-- [Vision Agents SDK Integration](#vision-agents-sdk-integration)
 - [Project Structure](#project-structure)
 - [Testing](#testing)
 - [Future Plans](#future-plans)
 - [License](#license)
 
 ---
-
 ## How It Works
 
 1. **Camera** captures live video — from a webcam, phone camera, or an M5Stack K210 edge device
@@ -50,7 +50,7 @@ The entire system runs as a single real-time voice+vision conversation — the u
 ## Architecture
 
 ```
-Camera (Webcam / M5Stack K210)
+Camera (Webcam / M5Stack)
     │
     ▼
 GetStream Edge Network (WebRTC — real-time video + audio transport)
@@ -96,7 +96,7 @@ React 19 Frontend (Stream Video SDK + 3D Avatar + Alert Overlay)
 |-------|-----------|---------|
 | **Orchestration** | [Vision Agents SDK](https://pypi.org/project/vision-agents/) `>=0.3.7` | Agent lifecycle, processors, events, MCP |
 | **Reasoning LLM** | Gemini 2.5 Flash Realtime | Speech-to-speech voice + vision reasoning |
-| **Scene Analysis** | Multi-VLM fallback chain | Gemini → Grok → Azure GPT-4o → NVIDIA Cosmos → HuggingFace |
+| **Scene Analysis** | Multi-VLM fallback chain | Gemini → Azure GPT-4o → NVIDIA Cosmos (HuggingFace and Grok also available) |
 | **Object Detection** | Ultralytics YOLO11 (`yolo11n.pt`) | 80-class detection, distance/direction estimation |
 | **Pose Estimation** | Ultralytics YOLO11 Pose (`yolo11n-pose.pt`) | 17 COCO body keypoints for sign language |
 | **Hand Tracking** | Google MediaPipe Hand Landmarker | 21 keypoints per hand, finger-state ASL recognition |
@@ -114,6 +114,163 @@ React 19 Frontend (Stream Video SDK + 3D Avatar + Alert Overlay)
 
 ---
 
+## Vision Agents SDK Integration
+
+WorldLens is built on top of the **Vision Agents SDK** (`vision-agents>=0.3.7`). Every core capability uses the SDK's classes and APIs.
+
+| SDK Class | Where Used | Purpose |
+|-----------|-----------|---------|
+| `Agent` | `main.py` → `create_agent()` | Core agent instance — LLM, processors, event bus, conversation |
+| `AgentLauncher` | `main.py` → entry point | Manages agent lifecycle: creation, call joining, concurrency, timeouts |
+| `Runner` | `main.py` → entry point | Top-level entry — launches as FastAPI server (`serve`) or standalone (`run`) |
+| `gemini.Realtime` | `create_agent()` | LLM backend — Gemini 2.5 Flash Realtime at 5 FPS |
+| `getstream.Edge` | `create_agent()` | WebRTC transport — GetStream Edge Network |
+| `VideoProcessorPublisher` | All 3 processors | Base class for video processors that publish annotated frames |
+| `BaseEvent` | All custom events | Base class for `HazardDetectedEvent`, `SignDetectedEvent`, etc. |
+| `agent.llm.register_function` | 12 MCP tools | Registers tools that Gemini can call autonomously |
+| `agent.simple_response()` | Event handlers | Sends text prompts to LLM for immediate spoken response |
+
+### How the SDK Powers Each Feature
+
+1. **Real-time Voice** — `gemini.Realtime(fps=5)` provides full speech-to-speech reasoning over live video
+2. **WebRTC Transport** — `getstream.Edge()` manages the WebRTC connection with global edge CDN
+3. **Video Processors** — SignBridge, GuideLens, and OCR processors extend `VideoProcessorPublisher` / `VideoProcessor`
+4. **Event System** — Custom events (`HazardDetectedEvent`, `SceneSummaryEvent`, etc.) use `BaseEvent` pub/sub
+5. **MCP Tool Calling** — 12 tools via `@agent.llm.register_function()` — Gemini decides when to call each
+6. **Agent Lifecycle** — `Runner` → `AgentLauncher` → `create_agent()` → `join_call()` → `agent.finish()`
+
+---
+
+## Docker Deployment
+
+WorldLens can be deployed as a single Docker container that includes both the backend and a pre-built frontend.
+
+```bash
+# Build the image (use linux/amd64 for mediapipe compatibility)
+docker build --platform linux/amd64 -f deploy/Dockerfile -t worldlens:latest .
+
+# Run with your .env file
+docker run --platform linux/amd64 -p 8000:8000 --env-file .env worldlens:latest
+```
+
+The container serves:
+- **Backend API** at `http://localhost:8000/`
+- **Frontend** at `http://localhost:8000/` (static files served by FastAPI)
+
+> See [deploy/README.md](deploy/README.md) for detailed Docker setup, docker-compose configuration, and environment variable reference.
+
+---
+
+## Local Setup Guide
+
+### Prerequisites
+
+- **Python 3.12+** with [uv](https://docs.astral.sh/uv/) package manager
+- **Node.js 18+** (recommended: 20 LTS)
+- **Webcam** or phone camera (or M5Stack K210)
+- **Active internet connection** — required for all cloud APIs
+- API keys (see [API Keys](#api-keys) section)
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/Vishwa-docs/WeMakeDevs-Vision-Possible-Hackathon.git
+cd WeMakeDevs-Vision-Possible-Hackathon
+```
+
+### 2. Backend Setup
+
+```bash
+cd backend
+
+# Install all dependencies (creates .venv automatically)
+uv sync
+
+# Configure environment
+cp .env.example .env
+# Edit .env with your API keys (see API Keys section below)
+
+# Run as HTTP server (for frontend connection)
+uv run main.py serve --host 0.0.0.0 --port 8000
+```
+
+The backend will start on `http://localhost:8000`. You should see:
+```
+Stream agent user upserted: worldlens-agent
+```
+
+### 3. Frontend Setup
+
+```bash
+cd frontend
+
+# Install dependencies
+npm install
+
+# Configure environment
+cp .env.example .env
+# Set VITE_STREAM_API_KEY (same as backend's STREAM_API_KEY)
+# Set VITE_BACKEND_URL=http://localhost:8000
+
+# Start dev server
+npm run dev
+```
+
+The frontend will start at `http://localhost:5173`. Open it in your browser to begin a session.
+
+### 4. Start a Session
+
+1. Open `http://localhost:5173` in your browser
+2. Allow camera and microphone access
+3. The agent will greet you with current time and weather
+4. Say _"Take me to [destination]"_ to start navigation, or just talk naturally
+
+> **Tip:** The backend defaults to GuideLens mode. Use the mode toggle in the UI or `POST /switch-mode` to switch to SignBridge.
+
+---
+
+## API Keys
+
+### Required (App will not function without these)
+
+| Variable | Service | How to Get |
+|----------|---------|------------|
+| `STREAM_API_KEY` | GetStream WebRTC | [getstream.io/dashboard](https://getstream.io/dashboard/) — create an app, copy API Key |
+| `STREAM_API_SECRET` | GetStream WebRTC | Same dashboard — copy the Secret |
+| `GOOGLE_API_KEY` | Gemini 2.5 Flash Realtime | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) — click "Create API Key" |
+
+### Recommended (Enhanced navigation features)
+
+| Variable | Service | How to Get | Used For |
+|----------|---------|------------|----------|
+| `MAPS_API_KEY` | Google Maps Platform | [console.cloud.google.com](https://console.cloud.google.com/apis/credentials) — enable Directions, Geocoding, Places, Geolocation APIs | Walking directions, nearby places, location info |
+| `HF_API_TOKEN` | HuggingFace | [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) | SignBridge NLP (gloss → English via Llama 3) |
+
+### Optional (VLM fallback providers — automatic failover)
+
+| Variable | Service | Used For |
+|----------|---------|----------|
+| `NGC_API_KEY` | NVIDIA NGC | Cosmos 2 VLM for dense scene descriptions |
+| `XAI_API_KEY` | xAI Grok | Grok Vision for OCR and scene analysis |
+| `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_KEY` / `AZURE_OPENAI_DEPLOYMENT` | Azure OpenAI | GPT-4o Vision fallback |
+
+### Google Maps — Detailed Setup
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project (or select existing)
+3. Navigate to **APIs & Services → Library** and enable:
+   - **Directions API** — walking turn-by-turn navigation
+   - **Geocoding API** — address → coordinates
+   - **Places API (Text Search)** — "nearest pharmacy" queries
+   - **Geolocation API** — IP-based approximate location
+4. Go to **APIs & Services → Credentials** → Create API Key
+5. (Recommended) Restrict the key to only the 4 APIs above
+6. Set `MAPS_API_KEY` in your `.env`
+
+> **Without `MAPS_API_KEY`**, the navigation tools still work but return mock directions. The app is fully functional for demo purposes without this key.
+
+---
+
 ## GuideLens — Navigation Mode
 
 GuideLens is the primary mode — a walking companion that acts as the user's eyes.
@@ -123,7 +280,7 @@ GuideLens is the primary mode — a walking companion that acts as the user's ey
 - **Object Detection** — YOLO11 detects people, vehicles, obstacles, furniture, animals (80 classes) in every frame
 - **Hazard Tracking** — Bounding box growth rate estimation detects approaching objects; direction (left/center/right) and distance (near/medium/far) are continuously computed
 - **Proactive Voice Commentary** — The agent describes the environment, reads signs, warns about obstacles — all through natural speech via Gemini Realtime
-- **Turn-by-Turn Navigation** — User says _"Take me to L&T South City"_ and the agent calls Google Maps, reads the route aloud, and guides step-by-step
+- **Turn-by-Turn Navigation** — User says _"Take me to Elita"_ and the agent calls Google Maps, reads the route aloud, and guides step-by-step
 - **Text Reading (OCR)** — Signs, building names, bus numbers, notices are read aloud using a multi-VLM provider chain
 - **Spatial Memory** — Every detected object is logged to SQLite with timestamp, position, and direction. User can ask _"When did you last see a person?"_
 - **Haptic Alerts** — Critical hazards trigger visual + audio + haptic feedback on the frontend
@@ -132,7 +289,7 @@ GuideLens is the primary mode — a walking companion that acts as the user's ey
 ### GuideLens Vision Pipeline
 
 ```
-Camera Frame → YOLO11 Detection (80 classes) → BboxTracker
+Camera Frame → YOLO11 Detection → BboxTracker
                                                     │
                                         Direction + Distance estimation
                                         Growth rate (approach speed)
@@ -229,163 +386,6 @@ Browser Dashboard (http://localhost:8001)
 - **Firmware:** MaixPy (MicroPython for K210)
 
 > See [m5stack_camera/README.md](m5stack_camera/README.md) for flashing instructions and setup guide.
-
----
-
-## Local Setup Guide
-
-### Prerequisites
-
-- **Python 3.12+** with [uv](https://docs.astral.sh/uv/) package manager
-- **Node.js 18+** (recommended: 20 LTS)
-- **Webcam** or phone camera (or M5Stack K210)
-- **Active internet connection** — required for all cloud APIs
-- API keys (see [API Keys](#api-keys) section)
-
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/Vishwa-docs/WeMakeDevs-Vision-Possible-Hackathon.git
-cd WeMakeDevs-Vision-Possible-Hackathon
-```
-
-### 2. Backend Setup
-
-```bash
-cd backend
-
-# Install all dependencies (creates .venv automatically)
-uv sync
-
-# Configure environment
-cp .env.example .env
-# Edit .env with your API keys (see API Keys section below)
-
-# Run as HTTP server (for frontend connection)
-uv run main.py serve --host 0.0.0.0 --port 8000
-```
-
-The backend will start on `http://localhost:8000`. You should see:
-```
-Stream agent user upserted: worldlens-agent
-```
-
-### 3. Frontend Setup
-
-```bash
-cd frontend
-
-# Install dependencies
-npm install
-
-# Configure environment
-cp .env.example .env
-# Set VITE_STREAM_API_KEY (same as backend's STREAM_API_KEY)
-# Set VITE_BACKEND_URL=http://localhost:8000
-
-# Start dev server
-npm run dev
-```
-
-The frontend will start at `http://localhost:5173`. Open it in your browser to begin a session.
-
-### 4. Start a Session
-
-1. Open `http://localhost:5173` in your browser
-2. Allow camera and microphone access
-3. The agent will greet you with current time and weather
-4. Say _"Take me to [destination]"_ to start navigation, or just talk naturally
-
-> **Tip:** The backend defaults to GuideLens mode. Use the mode toggle in the UI or `POST /switch-mode` to switch to SignBridge.
-
----
-
-## Docker Deployment
-
-WorldLens can be deployed as a single Docker container that includes both the backend and a pre-built frontend.
-
-```bash
-# Build the image (use linux/amd64 for mediapipe compatibility)
-docker build --platform linux/amd64 -f deploy/Dockerfile -t worldlens:latest .
-
-# Run with your .env file
-docker run --platform linux/amd64 -p 8000:8000 --env-file .env worldlens:latest
-```
-
-The container serves:
-- **Backend API** at `http://localhost:8000/`
-- **Frontend** at `http://localhost:8000/` (static files served by FastAPI)
-
-> See [deploy/README.md](deploy/README.md) for detailed Docker setup, docker-compose configuration, and environment variable reference.
-
----
-
-## API Keys
-
-### Required (App will not function without these)
-
-| Variable | Service | How to Get |
-|----------|---------|------------|
-| `STREAM_API_KEY` | GetStream WebRTC | [getstream.io/dashboard](https://getstream.io/dashboard/) — create an app, copy API Key |
-| `STREAM_API_SECRET` | GetStream WebRTC | Same dashboard — copy the Secret |
-| `GOOGLE_API_KEY` | Gemini 2.5 Flash Realtime | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) — click "Create API Key" |
-
-### Recommended (Enhanced navigation features)
-
-| Variable | Service | How to Get | Used For |
-|----------|---------|------------|----------|
-| `MAPS_API_KEY` | Google Maps Platform | [console.cloud.google.com](https://console.cloud.google.com/apis/credentials) — enable Directions, Geocoding, Places, Geolocation APIs | Walking directions, nearby places, location info |
-| `HF_API_TOKEN` | HuggingFace | [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) | SignBridge NLP (gloss → English via Llama 3) |
-
-### Optional (VLM fallback providers — automatic failover)
-
-| Variable | Service | Used For |
-|----------|---------|----------|
-| `NGC_API_KEY` | NVIDIA NGC | Cosmos 2 VLM for dense scene descriptions |
-| `XAI_API_KEY` | xAI Grok | Grok Vision for OCR and scene analysis |
-| `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_KEY` / `AZURE_OPENAI_DEPLOYMENT` | Azure OpenAI | GPT-4o Vision fallback |
-
-### Google Maps — Detailed Setup
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project (or select existing)
-3. Navigate to **APIs & Services → Library** and enable:
-   - **Directions API** — walking turn-by-turn navigation
-   - **Geocoding API** — address → coordinates
-   - **Places API (Text Search)** — "nearest pharmacy" queries
-   - **Geolocation API** — IP-based approximate location
-4. Go to **APIs & Services → Credentials** → Create API Key
-5. (Recommended) Restrict the key to only the 4 APIs above
-6. Set `MAPS_API_KEY` in your `.env`
-
-> **Without `MAPS_API_KEY`**, the navigation tools still work but return mock directions. The app is fully functional for demo purposes without this key.
-
----
-
-## Vision Agents SDK Integration
-
-WorldLens is built on top of the **Vision Agents SDK** (`vision-agents>=0.3.7`). Every core capability uses the SDK's classes and APIs.
-
-| SDK Class | Where Used | Purpose |
-|-----------|-----------|---------|
-| `Agent` | `main.py` → `create_agent()` | Core agent instance — LLM, processors, event bus, conversation |
-| `AgentLauncher` | `main.py` → entry point | Manages agent lifecycle: creation, call joining, concurrency, timeouts |
-| `Runner` | `main.py` → entry point | Top-level entry — launches as FastAPI server (`serve`) or standalone (`run`) |
-| `gemini.Realtime` | `create_agent()` | LLM backend — Gemini 2.5 Flash Realtime at 5 FPS |
-| `getstream.Edge` | `create_agent()` | WebRTC transport — GetStream Edge Network |
-| `VideoProcessorPublisher` | All 3 processors | Base class for video processors that publish annotated frames |
-| `BaseEvent` | All custom events | Base class for `HazardDetectedEvent`, `SignDetectedEvent`, etc. |
-| `agent.llm.register_function` | 12 MCP tools | Registers tools that Gemini can call autonomously |
-| `agent.simple_response()` | Event handlers | Sends text prompts to LLM for immediate spoken response |
-
-### How the SDK Powers Each Feature
-
-1. **Real-time Voice** — `gemini.Realtime(fps=5)` provides full speech-to-speech reasoning over live video
-2. **WebRTC Transport** — `getstream.Edge()` manages the WebRTC connection with global edge CDN
-3. **Video Processors** — SignBridge, GuideLens, and OCR processors extend `VideoProcessorPublisher` / `VideoProcessor`
-4. **Event System** — Custom events (`HazardDetectedEvent`, `SceneSummaryEvent`, etc.) use `BaseEvent` pub/sub
-5. **MCP Tool Calling** — 12 tools via `@agent.llm.register_function()` — Gemini decides when to call each
-6. **Agent Lifecycle** — `Runner` → `AgentLauncher` → `create_agent()` → `join_call()` → `agent.finish()`
 
 ---
 
