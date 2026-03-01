@@ -626,10 +626,10 @@ describe("useToasts hook", () => {
     const { useToasts } = await import("../components/Toast");
     const { result } = renderHook(() => useToasts());
 
-    let id1: string, _id2: string;
+    let id1: string;
     act(() => {
       id1 = result.current.addToast("First", "info");
-      _id2 = result.current.addToast("Second", "error");
+      result.current.addToast("Second", "error");
     });
 
     expect(result.current.toasts).toHaveLength(2);
