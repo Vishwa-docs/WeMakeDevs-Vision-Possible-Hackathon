@@ -34,8 +34,7 @@ camera for **standalone GuideLens navigation** mode.
 | `camera/boot.py` | K210 flash | Auto-start detection on power-on |
 | `camera/main.py` | K210 flash | YOLO inference + UART output |
 | `camera/config.py` | K210 flash | Camera & detection settings |
-| `camera_host/bridge.py` | Your laptop | Receives UART data, serves WebSocket |
-| `camera_host/ui_server.py` | Your laptop | Lightweight standalone UI on port 8001 |
+| `camera_host/bridge.py` | Your laptop | Serial → WebSocket bridge + HTTP UI server on port 8001 |
 | `models/` | K210 SD card or flash | .kmodel files |
 
 ## Hardware Requirements
@@ -159,8 +158,8 @@ m5stack_camera/
 │   ├── main.py               ← YOLO inference + UART output
 │   └── config.py             ← Detection settings
 ├── camera_host/               ← Code that runs on your LAPTOP
-│   ├── bridge.py             ← Serial → WebSocket bridge
-│   ├── ui_server.py          ← Standalone camera UI server
+│   ├── bridge.py             ← Serial → WebSocket bridge + HTTP UI server
+│   ├── requirements.txt      ← Python dependencies
 │   └── static/
 │       └── index.html        ← Camera viewer UI (port 8001)
 └── models/
