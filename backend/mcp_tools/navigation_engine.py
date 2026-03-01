@@ -68,9 +68,9 @@ class SmartAnnouncer:
     # Cooldown per priority level (seconds)
     COOLDOWN = {
         Priority.CRITICAL: 1.5,    # Can repeat critical alerts quickly
-        Priority.HIGH: 3.0,       # Approaching hazards — faster repeat
-        Priority.MEDIUM: 5.0,     # New objects — announce frequently (3s cycle)
-        Priority.LOW: 10.0,       # Informational — still proactive
+        Priority.HIGH: 3.0,       # Approaching hazards
+        Priority.MEDIUM: 5.0,     # New objects
+        Priority.LOW: 10.0,       # Informational
         Priority.SILENT: float("inf"),
     }
 
