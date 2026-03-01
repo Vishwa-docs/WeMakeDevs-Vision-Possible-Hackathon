@@ -20,6 +20,7 @@ Run:
 import asyncio
 import logging
 import os
+import re
 import time
 import uuid
 from collections import deque
@@ -71,6 +72,8 @@ from mcp_tools.smart_tools import (
 # Module-level reference to the active OCR processor (for API endpoints)
 _active_ocr_processor: OCRProcessor | None = None
 # Day 5: References to active processors for telemetry
+# Global telemetry start time — reset each time a new session starts
+_telemetry_start: float = time.time()
 _active_processor_refs: list = []
 
 # ---------------------------------------------------------------------------
@@ -342,8 +345,16 @@ class _TranscriptAggregator:
         self._message_id: str = str(uuid.uuid4())
         self._lock = asyncio.Lock()
 
+    @staticmethod
+    def _clean(text: str) -> str:
+        """Strip control-character tokens (e.g. <ctrl46>) from transcript."""
+        return re.sub(r"<ctrl\d+>", "", text)
+
     async def add(self, text: str, conversation, user_id: str, role: str):
         """Append a transcript chunk and (re)schedule the flush timer."""
+        text = self._clean(text)
+        if not text.strip():
+            return  # skip pure control-char chunks
         async with self._lock:
             self._buffer.append(text)
 
@@ -407,9 +418,11 @@ class _TranscriptAggregator:
 # ---------------------------------------------------------------------------
 async def create_agent(**kwargs) -> Agent:
     """Create and configure a WorldLens agent instance."""
-    # Clear transcript from previous sessions so new session starts fresh
+    global _telemetry_start
+    # Reset session-level state so refresh = fresh session
     _transcript_log.clear()
-    logger.info("Transcript log cleared for new session")
+    _telemetry_start = time.time()
+    logger.info("Transcript log + telemetry reset for new session")
 
     instructions = _get_instructions()
     processors = _build_processors()
@@ -444,7 +457,11 @@ async def create_agent(**kwargs) -> Agent:
     # --- Replacement handlers with buffering -------------------------------
     @agent.events.subscribe
     async def on_user_speech(event: RealtimeUserSpeechTranscriptionEvent):
+        nonlocal _last_user_speech_time
         logger.info("🎤 User: %s", event.text)
+        # Track when user last spoke — suppress proactive commentary so
+        # the model can answer the user's question without interruption
+        _last_user_speech_time = time.time()
         # Suppress navigation announcements while the user is speaking
         navigation_engine.on_user_speech()
         if agent.conversation and event.text:
@@ -539,20 +556,32 @@ async def create_agent(**kwargs) -> Agent:
     _last_scene_response_time: float = 0.0
     _SCENE_RESPONSE_COOLDOWN: float = 10.0  # min seconds between scene summaries
     _last_hazard_response_time: float = 0.0
-    _HAZARD_RESPONSE_COOLDOWN: float = 4.0   # min seconds between hazard alerts
+    _HAZARD_RESPONSE_COOLDOWN: float = 15.0  # min seconds between hazard alerts
+    _last_hazard_key: str = ""                # dedup: "type|direction|distance"
     _last_agent_speech_time: float = 0.0      # tracks when agent last spoke
-    _AGENT_POST_SPEECH_GAP: float = 10.0       # wait 4s after agent stops before next commentary
-    _session_start_time: float = time.time()  # suppress commentary during greeting
-    _GREETING_GRACE_PERIOD: float = 18.0      # seconds to wait after session start
+    _AGENT_POST_SPEECH_GAP: float = 10.0       # wait after agent stops before next commentary
+    _last_user_speech_time: float = 0.0        # tracks when user last spoke
+    _USER_SPEECH_SUPPRESSION: float = 8.0      # suppress proactive commentary for 8s after user speaks
+    _session_start_time: float = time.time()   # suppress commentary during greeting
+    _GREETING_GRACE_PERIOD: float = 18.0       # seconds to wait after session start
 
     def _agent_is_free() -> bool:
-        """Check if the agent is free to speak (not currently talking, past greeting)."""
+        """Check if the agent is free for PROACTIVE commentary (scenes, OCR).
+
+        Returns False during the greeting window, after agent speech,
+        and — critically — after the user speaks so the model can answer
+        the user's question without being interrupted by scene descriptions.
+        Hazard alerts bypass this gate entirely.
+        """
         now = time.time()
         # Still in greeting grace period?
         if now - _session_start_time < _GREETING_GRACE_PERIOD:
             return False
         # Agent spoke recently? Wait for post-speech gap
         if now - _last_agent_speech_time < _AGENT_POST_SPEECH_GAP:
+            return False
+        # User spoke recently? Let the model answer their question first
+        if now - _last_user_speech_time < _USER_SPEECH_SUPPRESSION:
             return False
         return True
 
@@ -567,7 +596,7 @@ async def create_agent(**kwargs) -> Agent:
 
     @agent.events.subscribe
     async def on_hazard_detected(event: HazardDetectedEvent):
-        nonlocal _last_hazard_response_time
+        nonlocal _last_hazard_response_time, _last_hazard_key
         logger.warning(
             "⚠️ HAZARD: %s [%s, %s] — growth %.3f/s",
             event.hazard_type,
@@ -575,11 +604,19 @@ async def create_agent(**kwargs) -> Agent:
             event.direction,
             event.growth_rate,
         )
-        # Feed hazard to agent for TTS — but only if agent is not already talking
-        if AGENT_MODE == "guidelens" and _agent_is_free():
+        # Feed hazard to agent for TTS — hazards bypass _agent_is_free()
+        # but use cooldown + deduplication to avoid spamming the same alert
+        if AGENT_MODE == "guidelens":
             now = time.time()
-            if now - _last_hazard_response_time >= _HAZARD_RESPONSE_COOLDOWN:
+            hazard_key = f"{event.hazard_type}|{event.direction}|{event.distance_estimate}"
+            # Skip if SAME hazard was just announced (dedup)
+            same_hazard = (hazard_key == _last_hazard_key)
+            if now - _last_hazard_response_time >= _HAZARD_RESPONSE_COOLDOWN or not same_hazard:
+                # Even for a NEW hazard, enforce a minimum 6s gap
+                if now - _last_hazard_response_time < 6.0:
+                    return
                 _last_hazard_response_time = now
+                _last_hazard_key = hazard_key
                 approach_note = ""
                 if event.growth_rate > 0.03:
                     approach_note = " and approaching quickly"
@@ -621,8 +658,14 @@ async def create_agent(**kwargs) -> Agent:
         # Feed significant OCR text to agent — only when agent is free
         if AGENT_MODE == "guidelens" and event.text and _agent_is_free():
             text_lower = event.text.strip().lower()
-            # Skip empty/trivial results
-            if text_lower and text_lower != "none" and "no text" not in text_lower and len(text_lower) > 3:
+            # Skip empty/trivial/"no text" results from Azure/VLM providers
+            skip_phrases = ("none", "no text", "none.", "none detected",
+                           "no text detected", "no visible text", "n/a",
+                           "no text visible", "there is no text",
+                           "no significant text", "i don't see any text")
+            if (text_lower
+                    and not any(text_lower.startswith(p) for p in skip_phrases)
+                    and len(text_lower) > 5):
                 try:
                     await agent.simple_response(
                         f"[TEXT DETECTED] I can see the following text: "
@@ -1239,8 +1282,7 @@ if __name__ == "__main__":
     # Day 5: Real Telemetry Metrics Endpoint
     # ------------------------------------------------------------------
 
-    # Module-level telemetry state — tracks session-level metrics
-    _telemetry_start = time.time()
+    # Module-level telemetry state — _telemetry_start is the global declared above
     _session_count = 0
 
     @runner.fast_api.get("/telemetry")

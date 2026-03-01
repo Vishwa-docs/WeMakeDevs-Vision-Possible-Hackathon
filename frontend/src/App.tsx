@@ -106,6 +106,13 @@ function App() {
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const lastTranscriptTs = React.useRef(0);
 
+  // On mount (page load / refresh) — clear backend transcript so we start fresh
+  useEffect(() => {
+    clearTranscript().catch(() => {});
+    setTranscript([]);
+    lastTranscriptTs.current = 0;
+  }, []);
+
   // Day 5: Hazard alert state (replaces old placeholder)
   const [alertActive, setAlertActive] = useState(false);
   const [currentAlert, setCurrentAlert] = useState<HazardAlert | null>(null);
