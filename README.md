@@ -7,20 +7,21 @@
 - **👁️ GuideLens** — A walking navigation and environmental awareness assistant for visually impaired users. It sees what's in front of them, reads signs, warns about hazards, gives turn-by-turn directions, and describes the world — all through natural voice conversation.
 - **🤟 SignBridge** — A real-time sign language translation bridge using YOLO11 Pose estimation and MediaPipe hand tracking to interpret ASL finger-spelling and gestures into spoken English. _(Prototype stage — see Future Plans)_
 
-> Built for the **WeMakeDevs Vision Possible Hackathon** (February 2026)
+> Built for the **WeMakeDevs Vision Possible Hackathon** (February 2026) - [Link Here](https://www.wemakedevs.org/hackathons/vision)
 
 > **Note:** Architecture and idea were designed by me. Used AI for code generation (Perplexity + GitHub Copilot) as coding and refinement agents.
 
 > **Note on SignBridge** - I initially planned to make it as an app and planned features such as lip reading to audio and vibration when a person's name is called, but due to the time duration of the hackathon, choose to skip this. Will add it in a future update.
+
 ---
 
 ## Table of Contents
 
+- [Vision Agents SDK Integration](#vision-agents-sdk-integration)
+- [Docker Deployment](#docker-deployment)
 - [How It Works](#how-it-works)
 - [Architecture](#architecture)
 - [Tech Stack](#tech-stack)
-- [Vision Agents SDK Integration](#vision-agents-sdk-integration)
-- [Docker Deployment](#docker-deployment)
 - [Local Setup Guide](#local-setup-guide)
 - [API Keys](#api-keys)
 - [GuideLens — Navigation Mode](#guidelens--navigation-mode)
@@ -31,6 +32,53 @@
 - [Testing](#testing)
 - [Future Plans](#future-plans)
 - [License](#license)
+
+---
+
+## Vision Agents SDK Integration
+
+WorldLens is built on top of the **Vision Agents SDK** (`vision-agents>=0.3.7`). Every core capability uses the SDK's classes and APIs.
+
+| SDK Class | Where Used | Purpose |
+|-----------|-----------|---------|
+| `Agent` | `main.py` → `create_agent()` | Core agent instance — LLM, processors, event bus, conversation |
+| `AgentLauncher` | `main.py` → entry point | Manages agent lifecycle: creation, call joining, concurrency, timeouts |
+| `Runner` | `main.py` → entry point | Top-level entry — launches as FastAPI server (`serve`) or standalone (`run`) |
+| `gemini.Realtime` | `create_agent()` | LLM backend — Gemini 2.5 Flash Realtime at 5 FPS |
+| `getstream.Edge` | `create_agent()` | WebRTC transport — GetStream Edge Network |
+| `VideoProcessorPublisher` | All 3 processors | Base class for video processors that publish annotated frames |
+| `BaseEvent` | All custom events | Base class for `HazardDetectedEvent`, `SignDetectedEvent`, etc. |
+| `agent.llm.register_function` | 12 MCP tools | Registers tools that Gemini can call autonomously |
+| `agent.simple_response()` | Event handlers | Sends text prompts to LLM for immediate spoken response |
+
+### How the SDK Powers Each Feature
+
+1. **Real-time Voice** — `gemini.Realtime(fps=5)` provides full speech-to-speech reasoning over live video
+2. **WebRTC Transport** — `getstream.Edge()` manages the WebRTC connection with global edge CDN
+3. **Video Processors** — SignBridge, GuideLens, and OCR processors extend `VideoProcessorPublisher` / `VideoProcessor`
+4. **Event System** — Custom events (`HazardDetectedEvent`, `SceneSummaryEvent`, etc.) use `BaseEvent` pub/sub
+5. **MCP Tool Calling** — 12 tools via `@agent.llm.register_function()` — Gemini decides when to call each
+6. **Agent Lifecycle** — `Runner` → `AgentLauncher` → `create_agent()` → `join_call()` → `agent.finish()`
+
+---
+
+## Docker Deployment
+
+WorldLens can be deployed as a single Docker container that includes both the backend and a pre-built frontend.
+
+```bash
+# Build the image (use linux/amd64 for mediapipe compatibility)
+docker build --platform linux/amd64 -f deploy/Dockerfile -t worldlens:latest .
+
+# Run with your .env file
+docker run --platform linux/amd64 -p 8000:8000 --env-file .env worldlens:latest
+```
+
+The container serves:
+- **Backend API** at `http://localhost:8000/`
+- **Frontend** at `http://localhost:8000/` (static files served by FastAPI)
+
+> See [deploy/README.md](deploy/README.md) for detailed Docker setup, docker-compose configuration, and environment variable reference.
 
 ---
 ## How It Works
@@ -111,53 +159,6 @@ React 19 Frontend (Stream Video SDK + 3D Avatar + Alert Overlay)
 | **Containerization** | Docker (multi-stage build) | Single-container deployment |
 | **Backend Runtime** | Python 3.12, uv package manager | Fast dependency resolution |
 | **Testing** | pytest (backend, 24 tests) + Vitest (frontend, 46 tests) | Unit and integration tests |
-
----
-
-## Vision Agents SDK Integration
-
-WorldLens is built on top of the **Vision Agents SDK** (`vision-agents>=0.3.7`). Every core capability uses the SDK's classes and APIs.
-
-| SDK Class | Where Used | Purpose |
-|-----------|-----------|---------|
-| `Agent` | `main.py` → `create_agent()` | Core agent instance — LLM, processors, event bus, conversation |
-| `AgentLauncher` | `main.py` → entry point | Manages agent lifecycle: creation, call joining, concurrency, timeouts |
-| `Runner` | `main.py` → entry point | Top-level entry — launches as FastAPI server (`serve`) or standalone (`run`) |
-| `gemini.Realtime` | `create_agent()` | LLM backend — Gemini 2.5 Flash Realtime at 5 FPS |
-| `getstream.Edge` | `create_agent()` | WebRTC transport — GetStream Edge Network |
-| `VideoProcessorPublisher` | All 3 processors | Base class for video processors that publish annotated frames |
-| `BaseEvent` | All custom events | Base class for `HazardDetectedEvent`, `SignDetectedEvent`, etc. |
-| `agent.llm.register_function` | 12 MCP tools | Registers tools that Gemini can call autonomously |
-| `agent.simple_response()` | Event handlers | Sends text prompts to LLM for immediate spoken response |
-
-### How the SDK Powers Each Feature
-
-1. **Real-time Voice** — `gemini.Realtime(fps=5)` provides full speech-to-speech reasoning over live video
-2. **WebRTC Transport** — `getstream.Edge()` manages the WebRTC connection with global edge CDN
-3. **Video Processors** — SignBridge, GuideLens, and OCR processors extend `VideoProcessorPublisher` / `VideoProcessor`
-4. **Event System** — Custom events (`HazardDetectedEvent`, `SceneSummaryEvent`, etc.) use `BaseEvent` pub/sub
-5. **MCP Tool Calling** — 12 tools via `@agent.llm.register_function()` — Gemini decides when to call each
-6. **Agent Lifecycle** — `Runner` → `AgentLauncher` → `create_agent()` → `join_call()` → `agent.finish()`
-
----
-
-## Docker Deployment
-
-WorldLens can be deployed as a single Docker container that includes both the backend and a pre-built frontend.
-
-```bash
-# Build the image (use linux/amd64 for mediapipe compatibility)
-docker build --platform linux/amd64 -f deploy/Dockerfile -t worldlens:latest .
-
-# Run with your .env file
-docker run --platform linux/amd64 -p 8000:8000 --env-file .env worldlens:latest
-```
-
-The container serves:
-- **Backend API** at `http://localhost:8000/`
-- **Frontend** at `http://localhost:8000/` (static files served by FastAPI)
-
-> See [deploy/README.md](deploy/README.md) for detailed Docker setup, docker-compose configuration, and environment variable reference.
 
 ---
 
