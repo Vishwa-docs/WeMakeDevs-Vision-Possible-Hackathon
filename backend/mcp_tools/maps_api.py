@@ -255,16 +255,22 @@ async def get_walking_directions(
         Dict with route summary, step-by-step directions, and metadata.
     """
     if not _has_valid_key():
-        logger.warning("MAPS_API_KEY not set or invalid — using local route data")
+        key_val = _get_api_key()
+        logger.warning(
+            "MAPS_API_KEY not set or invalid (len=%d, starts='%s') — using local route data",
+            len(key_val), key_val[:8] if key_val else "EMPTY",
+        )
+        # Fallback: try known local routes, then stub
+        known = _check_known_route(origin, destination)
+        if known:
+            logger.info("Fallback: known route for '%s' → '%s'", origin, destination)
+            return known
         return _stub_directions(destination)
 
-    logger.info("Maps API key found — will use live Google Maps Directions API")
-
-    # Check known local routes first (e.g. B7→B9 on campus)
-    known = _check_known_route(origin, destination)
-    if known:
-        logger.info("Using known route for '%s' → '%s'", origin, destination)
-        return known
+    logger.info(
+        "Maps API key found (starts='%s') — calling live Google Maps Directions API",
+        _get_api_key()[:8],
+    )
 
     # Quota guard — directions call (+ possibly geocode & places)
     ok, reason = _can_call("directions")
@@ -307,6 +313,12 @@ async def get_walking_directions(
 
         if data.get("status") != "OK":
             error_msg = data.get("status", "Unknown error")
+            logger.warning("Maps API returned status: %s for dest='%s'", error_msg, destination)
+            # Fall back to known routes for local building IDs (B7, B9, etc.)
+            known = _check_known_route(origin, destination)
+            if known:
+                logger.info("API failed (%s), using known local route for '%s' → '%s'", error_msg, origin, destination)
+                return known
             # Provide helpful error messages
             if error_msg == "ZERO_RESULTS":
                 return {

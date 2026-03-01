@@ -9,19 +9,23 @@ emergency alerts, and comprehensive environment summarization.
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
 logger = logging.getLogger("worldlens.smart_tools")
+
+# Indian Standard Time (UTC+5:30) — default timezone for this project
+IST = ZoneInfo("Asia/Kolkata")
 
 
 # ---------------------------------------------------------------------------
 # Tool: Get Current Time & Date
 # ---------------------------------------------------------------------------
 async def get_time_and_date() -> dict:
-    """Return the current local time, date, and day of week."""
-    now = datetime.now()
+    """Return the current local time, date, and day of week in IST."""
+    now = datetime.now(IST)
     utc_now = datetime.now(timezone.utc)
     return {
         "status": "ok",
@@ -29,8 +33,9 @@ async def get_time_and_date() -> dict:
         "local_date": now.strftime("%A, %B %d, %Y"),
         "day_of_week": now.strftime("%A"),
         "time_24h": now.strftime("%H:%M:%S"),
+        "timezone": "IST",
         "utc_time": utc_now.strftime("%H:%M UTC"),
-        "spoken": f"It is currently {now.strftime('%I:%M %p')} on {now.strftime('%A, %B %d, %Y')}.",
+        "spoken": f"It is currently {now.strftime('%I:%M %p')} IST on {now.strftime('%A, %B %d, %Y')}.",
     }
 
 
@@ -46,7 +51,8 @@ async def get_weather_info(location: str = "") -> dict:
         async with aiohttp.ClientSession() as session:
             # Geocode the location (or default to a general query)
             geo_url = "https://geocoding-api.open-meteo.com/v1/search"
-            geo_params = {"name": location or "current location", "count": 1}
+            # Default to Bangalore (project demo location) if no location given
+            geo_params = {"name": location or "Bangalore", "count": 1}
             async with session.get(geo_url, params=geo_params, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 geo_data = await resp.json()
 

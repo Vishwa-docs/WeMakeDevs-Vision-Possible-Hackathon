@@ -76,7 +76,7 @@ _active_processor_refs: list = []
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-load_dotenv()
+load_dotenv(override=True)  # override=True ensures .env values always win
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
@@ -297,7 +297,7 @@ def _build_processors() -> list:
         return [signbridge]
     else:
         ocr = OCRProcessor(
-            scan_interval=4.0,    # background OCR scan every 4s (proactive reading)
+            scan_interval=15.0,   # background OCR scan every 15s (avoid overlap)
             max_cached_results=30,
             fps=2,                # capture 2 frames/s for OCR buffer
         )
@@ -310,7 +310,7 @@ def _build_processors() -> list:
             conf_threshold=0.4,
             model_path="yolo11n.pt",
             device="cpu",
-            scene_summary_interval=3.0,  # Proactive scene summaries every 3s
+            scene_summary_interval=10.0,  # Scene summaries every 10s
         )
         # Day 4: Wire spatial memory and navigation engine
         guidelens.set_spatial_memory(spatial_memory)
@@ -407,6 +407,10 @@ class _TranscriptAggregator:
 # ---------------------------------------------------------------------------
 async def create_agent(**kwargs) -> Agent:
     """Create and configure a WorldLens agent instance."""
+    # Clear transcript from previous sessions so new session starts fresh
+    _transcript_log.clear()
+    logger.info("Transcript log cleared for new session")
+
     instructions = _get_instructions()
     processors = _build_processors()
 
@@ -451,7 +455,10 @@ async def create_agent(**kwargs) -> Agent:
 
     @agent.events.subscribe
     async def on_agent_speech(event: RealtimeAgentSpeechTranscriptionEvent):
+        nonlocal _last_agent_speech_time
         logger.info("🤖 Agent: %s", event.text)
+        # Track when agent last spoke — used to avoid overlapping commentary
+        _last_agent_speech_time = time.time()
         if agent.conversation and event.text:
             await _agent_buf.add(
                 event.text, agent.conversation,
@@ -530,9 +537,24 @@ async def create_agent(**kwargs) -> Agent:
 
     # --- Cooldown tracking for proactive commentary --------------------------
     _last_scene_response_time: float = 0.0
-    _SCENE_RESPONSE_COOLDOWN: float = 3.0  # min seconds between scene summaries fed to agent
+    _SCENE_RESPONSE_COOLDOWN: float = 10.0  # min seconds between scene summaries
     _last_hazard_response_time: float = 0.0
-    _HAZARD_RESPONSE_COOLDOWN: float = 2.0  # min seconds between hazard alerts fed to agent
+    _HAZARD_RESPONSE_COOLDOWN: float = 4.0   # min seconds between hazard alerts
+    _last_agent_speech_time: float = 0.0      # tracks when agent last spoke
+    _AGENT_POST_SPEECH_GAP: float = 10.0       # wait 4s after agent stops before next commentary
+    _session_start_time: float = time.time()  # suppress commentary during greeting
+    _GREETING_GRACE_PERIOD: float = 18.0      # seconds to wait after session start
+
+    def _agent_is_free() -> bool:
+        """Check if the agent is free to speak (not currently talking, past greeting)."""
+        now = time.time()
+        # Still in greeting grace period?
+        if now - _session_start_time < _GREETING_GRACE_PERIOD:
+            return False
+        # Agent spoke recently? Wait for post-speech gap
+        if now - _last_agent_speech_time < _AGENT_POST_SPEECH_GAP:
+            return False
+        return True
 
     @agent.events.subscribe
     async def on_object_detected(event: ObjectDetectedEvent):
@@ -553,8 +575,8 @@ async def create_agent(**kwargs) -> Agent:
             event.direction,
             event.growth_rate,
         )
-        # Feed hazard to agent for IMMEDIATE TTS — real-time hazard alerts
-        if AGENT_MODE == "guidelens":
+        # Feed hazard to agent for TTS — but only if agent is not already talking
+        if AGENT_MODE == "guidelens" and _agent_is_free():
             now = time.time()
             if now - _last_hazard_response_time >= _HAZARD_RESPONSE_COOLDOWN:
                 _last_hazard_response_time = now
@@ -575,8 +597,8 @@ async def create_agent(**kwargs) -> Agent:
     async def on_scene_summary(event: SceneSummaryEvent):
         nonlocal _last_scene_response_time
         logger.info("📸 %s", event.summary)
-        # Feed scene summary to agent for proactive TTS commentary every 3s
-        if AGENT_MODE == "guidelens" and event.summary:
+        # Feed scene summary to agent — but only when agent is free (not talking)
+        if AGENT_MODE == "guidelens" and event.summary and _agent_is_free():
             now = time.time()
             if now - _last_scene_response_time >= _SCENE_RESPONSE_COOLDOWN:
                 _last_scene_response_time = now
@@ -596,8 +618,8 @@ async def create_agent(**kwargs) -> Agent:
     @agent.events.subscribe
     async def on_ocr_result(event: OCRResultEvent):
         logger.info("📝 OCR [%s]: %s", event.provider, event.text[:100])
-        # Feed significant OCR text to agent for TTS
-        if AGENT_MODE == "guidelens" and event.text:
+        # Feed significant OCR text to agent — only when agent is free
+        if AGENT_MODE == "guidelens" and event.text and _agent_is_free():
             text_lower = event.text.strip().lower()
             # Skip empty/trivial results
             if text_lower and text_lower != "none" and "no text" not in text_lower and len(text_lower) > 3:
@@ -893,19 +915,43 @@ async def join_call(
         # audio/video tracks are live.
         await asyncio.sleep(3.0)
         try:
-            if AGENT_MODE == "guidelens" and GUIDELENS_SUBMODE == "navigation":
-                await agent.simple_response(
-                    "Hello! I'm GuideLens, your navigation assistant. "
-                    "Let me check the weather first, then tell me where "
-                    "you'd like to go and I'll guide you there safely."
+            if AGENT_MODE == "guidelens":
+                # Programmatic greeting: fetch time + weather, build exact script
+                time_data = await _smart_get_time()
+                weather_data = await _smart_get_weather("")  # defaults to Bangalore
+
+                # Extract time/date (fields: local_time, day_of_week, local_date)
+                t_time = time_data.get("local_time", "")        # e.g. "11:39 AM"
+                t_day = time_data.get("day_of_week", "")         # e.g. "Sunday"
+                t_date = time_data.get("local_date", "")         # e.g. "Sunday, March 01, 2026"
+                # Strip the day name from local_date to avoid "Sunday, Sunday, March 01"
+                if t_day and t_date.startswith(t_day + ","):
+                    t_date = t_date[len(t_day) + 2:]             # "March 01, 2026"
+
+                # Extract weather (fields: location, condition, temperature_c, precipitation_mm)
+                w_city = weather_data.get("location", "Bengaluru")
+                w_desc = weather_data.get("condition", "clear")
+                w_temp = weather_data.get("temperature_c", 25)
+
+                # Build walking recommendation
+                precip = weather_data.get("precipitation_mm", 0)
+                if precip and precip > 0:
+                    walk_note = "There is some rain, so carry an umbrella if you go out."
+                elif w_temp and w_temp > 38:
+                    walk_note = "It is quite hot, so stay hydrated if you walk."
+                else:
+                    walk_note = "It is a good day for walking!"
+
+                # Build the EXACT greeting script — agent reads this verbatim
+                greeting = (
+                    f"Say this EXACTLY as written, word for word: "
+                    f"Hello! My name is GuideLens, your navigation assistant. "
+                    f"It is currently {t_time} IST on {t_day}, {t_date}. "
+                    f"Weather in {w_city} is currently {w_desc} at {w_temp} degrees. "
+                    f"{walk_note} "
+                    f"Where would you like to go?"
                 )
-            elif AGENT_MODE == "guidelens":
-                await agent.simple_response(
-                    "Hello! I'm GuideLens, your real-time vision assistant. "
-                    "I can see through your camera and I'll describe what's around "
-                    "you, read signs and text, and warn you about any obstacles. "
-                    "Point your camera around and I'll tell you what I see."
-                )
+                await agent.simple_response(greeting)
             else:
                 await agent.simple_response(
                     "Hello! I'm SignBridge, your sign-language translation assistant. "

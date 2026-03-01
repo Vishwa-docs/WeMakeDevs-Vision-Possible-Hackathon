@@ -274,6 +274,11 @@ function App() {
   }, [uptime, telemetry.uptime_seconds]);
 
   const handleStart = useCallback(async () => {
+    // Clear stale transcript from previous sessions before starting
+    await clearTranscript();
+    setTranscript([]);
+    lastTranscriptTs.current = 0;
+
     const id = `worldlens-${Date.now()}`;
     console.log("[WorldLens][App] Start Session clicked", { requestedCallId: id });
     setCallId(id);

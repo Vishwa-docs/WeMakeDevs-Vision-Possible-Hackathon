@@ -349,13 +349,14 @@ class GuideLensProcessor(VideoProcessorPublisher):
                         detections, w, frame_area, timestamp
                     )
 
-                    # --- Scene summary (periodic) ---
-                    if timestamp - self._last_summary_time > self.scene_summary_interval:
-                        await self._emit_scene_summary(detections, timestamp)
-                        self._last_summary_time = timestamp
-
                     # --- Log for spatial memory ---
                     self._log_detections(detections, timestamp)
+
+                # --- Scene summary (periodic) — fires even with NO detections
+                # so the agent always has something to say every 3 seconds ---
+                if self._events and timestamp - self._last_summary_time > self.scene_summary_interval:
+                    await self._emit_scene_summary(detections, timestamp)
+                    self._last_summary_time = timestamp
 
                 new_frame = av.VideoFrame.from_ndarray(
                     annotated_img, format="rgb24"
