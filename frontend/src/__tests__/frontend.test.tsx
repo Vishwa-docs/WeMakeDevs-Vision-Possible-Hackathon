@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, act, waitFor, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, act, fireEvent, cleanup } from "@testing-library/react";
 import { renderHook } from "@testing-library/react";
 
 // ===================================================================
@@ -352,7 +352,7 @@ describe("StatusBar component", () => {
     const { StatusBar } = await import("../components/StatusBar");
     render(
       <StatusBar
-        status={{ connected: false, mode: "guidelens", backendHealthy: true }}
+        status={{ connected: false, mode: "guidelens", submode: "normal", backendHealthy: true }}
       />
     );
     expect(screen.getByText("Backend")).toBeInTheDocument();
@@ -363,7 +363,7 @@ describe("StatusBar component", () => {
     const { StatusBar } = await import("../components/StatusBar");
     render(
       <StatusBar
-        status={{ connected: true, mode: "guidelens", backendHealthy: true }}
+        status={{ connected: true, mode: "guidelens", submode: "normal", backendHealthy: true }}
       />
     );
     expect(screen.getByText("Connected")).toBeInTheDocument();
@@ -373,7 +373,7 @@ describe("StatusBar component", () => {
     const { StatusBar } = await import("../components/StatusBar");
     render(
       <StatusBar
-        status={{ connected: false, mode: "signbridge", backendHealthy: true }}
+        status={{ connected: false, mode: "signbridge", submode: "normal", backendHealthy: true }}
       />
     );
     expect(screen.getByText("SignBridge")).toBeInTheDocument();
@@ -383,7 +383,7 @@ describe("StatusBar component", () => {
     const { StatusBar } = await import("../components/StatusBar");
     render(
       <StatusBar
-        status={{ connected: false, mode: "guidelens", backendHealthy: true }}
+        status={{ connected: false, mode: "guidelens", submode: "normal", backendHealthy: true }}
       />
     );
     expect(screen.getByText("GuideLens")).toBeInTheDocument();
@@ -396,6 +396,7 @@ describe("StatusBar component", () => {
         status={{
           connected: false,
           mode: "guidelens",
+          submode: "normal",
           backendHealthy: false,
         }}
       />
@@ -409,7 +410,7 @@ describe("StatusBar component", () => {
     const handleToggle = vi.fn();
     render(
       <StatusBar
-        status={{ connected: false, mode: "guidelens", backendHealthy: true }}
+        status={{ connected: false, mode: "guidelens", submode: "normal", backendHealthy: true }}
         onToggleMode={handleToggle}
       />
     );
@@ -625,10 +626,10 @@ describe("useToasts hook", () => {
     const { useToasts } = await import("../components/Toast");
     const { result } = renderHook(() => useToasts());
 
-    let id1: string, id2: string;
+    let id1: string, _id2: string;
     act(() => {
       id1 = result.current.addToast("First", "info");
-      id2 = result.current.addToast("Second", "error");
+      _id2 = result.current.addToast("Second", "error");
     });
 
     expect(result.current.toasts).toHaveLength(2);

@@ -100,7 +100,7 @@ function App() {
     setSubmode,
   } = useAgentSession();
   const [modeMessage, setModeMessage] = useState<string | null>(null);
-  const { toasts, addToast, dismissToast } = useToasts();
+  const { toasts, addToast: _addToast, dismissToast } = useToasts();
 
   const [callId, setCallId] = useState(`worldlens-${Date.now()}`);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);

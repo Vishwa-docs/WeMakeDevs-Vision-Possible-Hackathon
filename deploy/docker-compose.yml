@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+  worldlens:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: worldlens
+    ports:
+      - "8000:8000"   # Backend API
+      - "5173:5173"   # Frontend dev (only if running dev mode)
+    env_file:
+      - ../.env       # Put your .env in the project root
+    environment:
+      # Override these or use the .env file
+      - AGENT_MODE=guidelens
+    volumes:
+      # Persist spatial memory DB across restarts
+      - worldlens-data:/app/backend/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/mode"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  worldlens-data:

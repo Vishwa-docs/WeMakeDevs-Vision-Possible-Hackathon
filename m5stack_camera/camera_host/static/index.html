@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GuideLens Camera — K210 Live View</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0a0a1a;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #2a2a4a;
+    }
+
+    header h1 {
+      font-size: 1.3rem;
+      font-weight: 600;
+    }
+
+    header h1 span { opacity: 0.6; font-weight: 400; }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 0.85rem;
+    }
+
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 4px;
+    }
+
+    .status-dot.connected { background: #4caf50; box-shadow: 0 0 6px #4caf50; }
+    .status-dot.disconnected { background: #f44336; }
+    .status-dot.demo { background: #ff9800; box-shadow: 0 0 6px #ff9800; }
+
+    main {
+      flex: 1;
+      display: flex;
+      gap: 16px;
+      padding: 16px;
+    }
+
+    .camera-panel {
+      flex: 2;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .camera-viewport {
+      position: relative;
+      background: #111;
+      border-radius: 12px;
+      overflow: hidden;
+      aspect-ratio: 4/3;
+      border: 2px solid #2a2a4a;
+    }
+
+    .camera-viewport canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .camera-viewport .no-feed {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #666;
+      font-size: 1.1rem;
+    }
+
+    .camera-viewport .no-feed .icon { font-size: 3rem; margin-bottom: 8px; }
+
+    /* Hazard alert overlay */
+    .hazard-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      transition: opacity 0.3s;
+      opacity: 0;
+    }
+
+    .hazard-overlay.active {
+      opacity: 1;
+      animation: hazard-pulse 0.5s ease-in-out infinite alternate;
+    }
+
+    .hazard-overlay.near {
+      border: 4px solid #f44336;
+      box-shadow: inset 0 0 40px rgba(244, 67, 54, 0.3);
+    }
+
+    .hazard-overlay.medium {
+      border: 3px solid #ff9800;
+      box-shadow: inset 0 0 20px rgba(255, 152, 0, 0.2);
+    }
+
+    @keyframes hazard-pulse {
+      from { opacity: 0.7; }
+      to { opacity: 1; }
+    }
+
+    /* Direction indicator */
+    .direction-indicator {
+      position: absolute;
+      bottom: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 8px;
+      background: rgba(0,0,0,0.7);
+      padding: 6px 16px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+    }
+
+    .dir-zone {
+      padding: 4px 12px;
+      border-radius: 12px;
+      opacity: 0.4;
+      transition: all 0.2s;
+    }
+
+    .dir-zone.active {
+      opacity: 1;
+      font-weight: 600;
+    }
+
+    .dir-zone.left.active { background: #e91e63; }
+    .dir-zone.center.active { background: #4caf50; }
+    .dir-zone.right.active { background: #2196f3; }
+
+    /* Side panel */
+    .side-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-width: 280px;
+      max-width: 350px;
+    }
+
+    .panel-card {
+      background: #1a1a2e;
+      border-radius: 10px;
+      padding: 14px;
+      border: 1px solid #2a2a4a;
+    }
+
+    .panel-card h3 {
+      font-size: 0.85rem;
+      color: #aaa;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+    }
+
+    /* Detection list */
+    .detection-list {
+      list-style: none;
+      max-height: 250px;
+      overflow-y: auto;
+    }
+
+    .detection-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      margin-bottom: 4px;
+      font-size: 0.85rem;
+      transition: background 0.2s;
+    }
+
+    .detection-item.hazard { background: rgba(244, 67, 54, 0.15); }
+    .detection-item.safe { background: rgba(76, 175, 80, 0.1); }
+
+    .det-icon { font-size: 1.1rem; }
+    .det-class { font-weight: 600; flex: 1; }
+    .det-conf { color: #888; font-size: 0.75rem; }
+    .det-dir {
+      font-size: 0.7rem;
+      padding: 2px 6px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.1);
+    }
+    .det-dist {
+      font-size: 0.7rem;
+      padding: 2px 6px;
+      border-radius: 8px;
+    }
+    .det-dist.near { background: rgba(244, 67, 54, 0.3); color: #ff8a80; }
+    .det-dist.medium { background: rgba(255, 152, 0, 0.3); color: #ffcc80; }
+    .det-dist.far { background: rgba(76, 175, 80, 0.2); color: #a5d6a7; }
+
+    /* Stats */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .stat-item {
+      text-align: center;
+      padding: 8px;
+      background: rgba(255,255,255,0.03);
+      border-radius: 8px;
+    }
+
+    .stat-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #64b5f6;
+    }
+
+    .stat-label {
+      font-size: 0.7rem;
+      color: #888;
+      margin-top: 2px;
+    }
+
+    /* Alert log */
+    .alert-log {
+      max-height: 150px;
+      overflow-y: auto;
+      font-size: 0.8rem;
+    }
+
+    .alert-entry {
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      display: flex;
+      gap: 6px;
+    }
+
+    .alert-time { color: #666; min-width: 55px; }
+    .alert-text { color: #ffab91; }
+
+    footer {
+      padding: 8px 24px;
+      text-align: center;
+      font-size: 0.75rem;
+      color: #555;
+      border-top: 1px solid #1a1a2e;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      main { flex-direction: column; }
+      .side-panel { max-width: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>👁️ GuideLens Camera <span>— K210 Live</span></h1>
+    <div class="status-bar">
+      <span>
+        <span id="status-dot" class="status-dot disconnected"></span>
+        <span id="status-text">Connecting...</span>
+      </span>
+      <span id="fps-display">0 FPS</span>
+      <span id="frame-display">Frame: 0</span>
+    </div>
+  </header>
+
+  <main>
+    <div class="camera-panel">
+      <div class="camera-viewport">
+        <canvas id="camera-canvas"></canvas>
+        <div id="no-feed" class="no-feed">
+          <div class="icon">📷</div>
+          <div>Waiting for K210 camera feed...</div>
+          <div style="font-size: 0.8rem; margin-top: 4px; color: #555;">
+            Connect camera via USB or run with --demo
+          </div>
+        </div>
+
+        <div id="hazard-overlay" class="hazard-overlay"></div>
+
+        <div class="direction-indicator">
+          <span id="dir-left" class="dir-zone left">⬅ LEFT</span>
+          <span id="dir-center" class="dir-zone center">⬆ CENTER</span>
+          <span id="dir-right" class="dir-zone right">RIGHT ➡</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="side-panel">
+      <!-- Stats -->
+      <div class="panel-card">
+        <h3>📊 Camera Stats</h3>
+        <div class="stats-grid">
+          <div class="stat-item">
+            <div class="stat-value" id="stat-fps">0</div>
+            <div class="stat-label">FPS</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value" id="stat-objects">0</div>
+            <div class="stat-label">Objects</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value" id="stat-hazards">0</div>
+            <div class="stat-label">Hazards</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value" id="stat-memory">-</div>
+            <div class="stat-label">Free RAM</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Detections -->
+      <div class="panel-card">
+        <h3>🔍 Live Detections</h3>
+        <ul id="detection-list" class="detection-list">
+          <li style="color: #555; font-size: 0.85rem;">No detections yet</li>
+        </ul>
+      </div>
+
+      <!-- Alert Log -->
+      <div class="panel-card">
+        <h3>⚠️ Hazard Alerts</h3>
+        <div id="alert-log" class="alert-log">
+          <div style="color: #555; font-size: 0.85rem;">No alerts</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    GuideLens K210 Camera Bridge • Standalone UI (port 8001) • Does NOT use the main WorldLens backend
+  </footer>
+
+  <script>
+    // ─────────────────────────────────────────
+    // WebSocket connection to bridge.py
+    // ─────────────────────────────────────────
+    const WS_URL = `ws://${location.hostname}:${location.port || 8001}/ws`;
+    const canvas = document.getElementById('camera-canvas');
+    const ctx = canvas.getContext('2d');
+
+    let ws = null;
+    let reconnectTimer = null;
+    let alertHistory = [];
+    const MAX_ALERTS = 50;
+
+    // Object class → emoji map
+    const CLASS_ICONS = {
+      person: '🚶', bicycle: '🚲', car: '🚗', motorbike: '🏍️',
+      bus: '🚌', truck: '🚛', dog: '🐕', cat: '🐱',
+      horse: '🐴', bird: '🐦', chair: '🪑', bottle: '🍾',
+      'traffic light': '🚦', 'stop sign': '🛑', boat: '⛵',
+      aeroplane: '✈️', train: '🚂', sofa: '🛋️', tv: '📺',
+      'dining table': '🍽️', 'potted plant': '🌱', sheep: '🐑',
+      cow: '🐄',
+    };
+
+    function getIcon(cls) {
+      return CLASS_ICONS[cls] || '📦';
+    }
+
+    function connect() {
+      ws = new WebSocket(WS_URL);
+
+      ws.onopen = () => {
+        document.getElementById('status-dot').className = 'status-dot connected';
+        document.getElementById('status-text').textContent = 'Connected';
+      };
+
+      ws.onclose = () => {
+        document.getElementById('status-dot').className = 'status-dot disconnected';
+        document.getElementById('status-text').textContent = 'Disconnected';
+        // Reconnect after 2s
+        reconnectTimer = setTimeout(connect, 2000);
+      };
+
+      ws.onerror = () => {
+        ws.close();
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          updateUI(data);
+        } catch (e) {
+          console.warn('Parse error:', e);
+        }
+      };
+    }
+
+    function updateUI(data) {
+      // Demo mode indicator
+      if (data.demo_mode) {
+        document.getElementById('status-dot').className = 'status-dot demo';
+        document.getElementById('status-text').textContent = 'Demo Mode';
+      }
+
+      // Stats
+      document.getElementById('fps-display').textContent = `${data.fps || 0} FPS`;
+      document.getElementById('frame-display').textContent = `Frame: ${data.frame_number || 0}`;
+      document.getElementById('stat-fps').textContent = data.fps || 0;
+
+      const dets = data.detections || [];
+      const hazards = dets.filter(d => d.hz);
+
+      document.getElementById('stat-objects').textContent = dets.length;
+      document.getElementById('stat-hazards').textContent = hazards.length;
+
+      if (data.memory_free > 0) {
+        document.getElementById('stat-memory').textContent =
+          (data.memory_free / 1024).toFixed(0) + 'K';
+      }
+
+      // Render JPEG frame if available
+      if (data.frame_b64) {
+        const img = new Image();
+        img.onload = () => {
+          canvas.width = img.width;
+          canvas.height = img.height;
+          ctx.drawImage(img, 0, 0);
+          document.getElementById('no-feed').style.display = 'none';
+          // Draw bounding boxes on top
+          drawDetections(dets, img.width, img.height);
+        };
+        img.src = 'data:image/jpeg;base64,' + data.frame_b64;
+      } else if (dets.length > 0) {
+        // No frame but have detections — draw boxes on black background
+        canvas.width = 224;
+        canvas.height = 224;
+        ctx.fillStyle = '#111';
+        ctx.fillRect(0, 0, 224, 224);
+        drawDetections(dets, 224, 224);
+        document.getElementById('no-feed').style.display = 'none';
+      }
+
+      // Detection list
+      updateDetectionList(dets);
+
+      // Direction indicators
+      updateDirections(dets);
+
+      // Hazard overlay
+      updateHazardOverlay(hazards);
+
+      // Alert log
+      if (hazards.length > 0) {
+        for (const h of hazards) {
+          if (h.dist === 'near' || h.dist === 'medium') {
+            addAlert(h);
+          }
+        }
+      }
+    }
+
+    function drawDetections(dets, w, h) {
+      for (const d of dets) {
+        const x = (d.x - d.w / 2) * w;
+        const y = (d.y - d.h / 2) * h;
+        const bw = d.w * w;
+        const bh = d.h * h;
+
+        ctx.strokeStyle = d.hz ? '#f44336' : '#4caf50';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, bw, bh);
+
+        // Label
+        const label = `${d.c} ${(d.p * 100).toFixed(0)}%`;
+        ctx.font = '11px sans-serif';
+        ctx.fillStyle = d.hz ? '#f44336' : '#4caf50';
+        const tw = ctx.measureText(label).width;
+        ctx.fillRect(x, y - 14, tw + 6, 14);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(label, x + 3, y - 3);
+      }
+    }
+
+    function updateDetectionList(dets) {
+      const list = document.getElementById('detection-list');
+      if (dets.length === 0) {
+        list.innerHTML = '<li style="color: #555; font-size: 0.85rem;">No detections</li>';
+        return;
+      }
+
+      list.innerHTML = dets.map(d => `
+        <li class="detection-item ${d.hz ? 'hazard' : 'safe'}">
+          <span class="det-icon">${getIcon(d.c)}</span>
+          <span class="det-class">${d.c}</span>
+          <span class="det-conf">${(d.p * 100).toFixed(0)}%</span>
+          <span class="det-dir">${d.d}</span>
+          <span class="det-dist ${d.dist}">${d.dist}</span>
+        </li>
+      `).join('');
+    }
+
+    function updateDirections(dets) {
+      const dirs = { left: false, center: false, right: false };
+      for (const d of dets) {
+        if (d.hz) dirs[d.d] = true;
+      }
+      document.getElementById('dir-left').className =
+        `dir-zone left ${dirs.left ? 'active' : ''}`;
+      document.getElementById('dir-center').className =
+        `dir-zone center ${dirs.center ? 'active' : ''}`;
+      document.getElementById('dir-right').className =
+        `dir-zone right ${dirs.right ? 'active' : ''}`;
+    }
+
+    function updateHazardOverlay(hazards) {
+      const overlay = document.getElementById('hazard-overlay');
+      if (hazards.length === 0) {
+        overlay.className = 'hazard-overlay';
+        return;
+      }
+      const nearest = hazards.find(h => h.dist === 'near');
+      if (nearest) {
+        overlay.className = 'hazard-overlay active near';
+      } else if (hazards.some(h => h.dist === 'medium')) {
+        overlay.className = 'hazard-overlay active medium';
+      } else {
+        overlay.className = 'hazard-overlay';
+      }
+    }
+
+    function addAlert(hazard) {
+      const now = new Date();
+      const time = now.toLocaleTimeString('en-US', { hour12: false });
+      alertHistory.unshift({
+        time,
+        text: `${hazard.c} (${hazard.dist}) — ${hazard.d}`,
+      });
+      if (alertHistory.length > MAX_ALERTS) alertHistory.pop();
+
+      const log = document.getElementById('alert-log');
+      log.innerHTML = alertHistory.map(a => `
+        <div class="alert-entry">
+          <span class="alert-time">${a.time}</span>
+          <span class="alert-text">${a.text}</span>
+        </div>
+      `).join('');
+    }
+
+    // Start connection
+    connect();
+  </script>
+</body>
+</html>
