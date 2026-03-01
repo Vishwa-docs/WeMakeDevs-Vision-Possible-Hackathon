@@ -1,11 +1,16 @@
 """
 Day 5 tests — haptic alerts, telemetry, alert polling.
+
+Run:  python -m pytest testing/test_day5.py -v
 """
 
 import asyncio
 import time
 
 import pytest
+
+# Backend dir is added by conftest.py
+
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -1,4 +1,4 @@
-# WorldLens: Advanced System Architecture & Data Flow
+# WorldLens: System Architecture & Data Flow
 
 ```mermaid
 flowchart LR
@@ -17,18 +17,18 @@ flowchart LR
     subgraph WorldLens Backend
         D[Vision Agents Python Backend]
         D1[Session Manager]
-        D2[User Profile Store (PostgreSQL)]
-        D3[Frame Store (MinIO/S3)]
-        D4[Event Log (Redis Streams)]
+        D2[Local Storage (JSON/SQLite)]
+        D3[Frame Store (Local)]
+        D4[Event Bus (In-Memory)]
         D5[Processor Orchestrator]
         D6[Analytics Engine]
     end
     subgraph Processors
         E1[YOLOPoseProcessor (SignBridge)]
-        E2[Moondream CloudDetectionProcessor (GuideLens)]
-        E3[Moondream VLM (OCR/Text)]
+        E2[YOLO11 Detection (GuideLens)]
+        E3[Multi-VLM OCR (Gemini/Grok/Azure/NVIDIA/HF)]
         E4[HuggingFace NLP]
-        E5[NVIDIA Cosmos 2 VLM]
+        E5[NVIDIA NIM VLM]
     end
     subgraph Agentic Reasoning
         F1[Gemini 2.5 Flash Realtime]
@@ -37,7 +37,7 @@ flowchart LR
         F4[Spatial Memory DB (SQLite)]
     end
     subgraph Frontend
-        G[React 18 (Vite)]
+        G[React 19 (Vite 7)]
         G1[WebRTC Client]
         G2[User Session Store (IndexedDB)]
         G3[3D Avatar (React Three Fiber)]

@@ -106,6 +106,13 @@ function App() {
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const lastTranscriptTs = React.useRef(0);
 
+  // On mount (page load / refresh) — clear backend transcript so we start fresh
+  useEffect(() => {
+    clearTranscript().catch(() => {});
+    setTranscript([]);
+    lastTranscriptTs.current = 0;
+  }, []);
+
   // Day 5: Hazard alert state (replaces old placeholder)
   const [alertActive, setAlertActive] = useState(false);
   const [currentAlert, setCurrentAlert] = useState<HazardAlert | null>(null);
@@ -274,6 +281,11 @@ function App() {
   }, [uptime, telemetry.uptime_seconds]);
 
   const handleStart = useCallback(async () => {
+    // Clear stale transcript from previous sessions before starting
+    await clearTranscript();
+    setTranscript([]);
+    lastTranscriptTs.current = 0;
+
     const id = `worldlens-${Date.now()}`;
     console.log("[WorldLens][App] Start Session clicked", { requestedCallId: id });
     setCallId(id);

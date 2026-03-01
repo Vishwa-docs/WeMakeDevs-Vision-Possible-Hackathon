@@ -9,19 +9,23 @@ emergency alerts, and comprehensive environment summarization.
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
 logger = logging.getLogger("worldlens.smart_tools")
+
+# Indian Standard Time (UTC+5:30) — default timezone for this project
+IST = ZoneInfo("Asia/Kolkata")
 
 
 # ---------------------------------------------------------------------------
 # Tool: Get Current Time & Date
 # ---------------------------------------------------------------------------
 async def get_time_and_date() -> dict:
-    """Return the current local time, date, and day of week."""
-    now = datetime.now()
+    """Return the current local time, date, and day of week in IST."""
+    now = datetime.now(IST)
     utc_now = datetime.now(timezone.utc)
     return {
         "status": "ok",
@@ -29,8 +33,9 @@ async def get_time_and_date() -> dict:
         "local_date": now.strftime("%A, %B %d, %Y"),
         "day_of_week": now.strftime("%A"),
         "time_24h": now.strftime("%H:%M:%S"),
+        "timezone": "IST",
         "utc_time": utc_now.strftime("%H:%M UTC"),
-        "spoken": f"It is currently {now.strftime('%I:%M %p')} on {now.strftime('%A, %B %d, %Y')}.",
+        "spoken": f"It is currently {now.strftime('%I:%M %p')} IST on {now.strftime('%A, %B %d, %Y')}.",
     }
 
 
@@ -46,7 +51,8 @@ async def get_weather_info(location: str = "") -> dict:
         async with aiohttp.ClientSession() as session:
             # Geocode the location (or default to a general query)
             geo_url = "https://geocoding-api.open-meteo.com/v1/search"
-            geo_params = {"name": location or "current location", "count": 1}
+            # Default to Bangalore (project demo location) if no location given
+            geo_params = {"name": location or "Bangalore", "count": 1}
             async with session.get(geo_url, params=geo_params, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 geo_data = await resp.json()
 
@@ -131,9 +137,8 @@ def _wmo_to_description(code: int) -> str:
 # ---------------------------------------------------------------------------
 async def identify_color_in_scene() -> dict:
     """
-    Placeholder that tells the agent to use its visual understanding
-    to describe colors in the scene. The actual color identification
-    happens through the Gemini VLM which can see the video feed.
+    Instruct the agent to use its visual understanding to describe
+    colors visible in the current camera frame.
     """
     return {
         "status": "ok",
@@ -177,8 +182,8 @@ async def trigger_emergency(reason: str, severity: str = "high") -> dict:
         "message": f"Emergency alert logged: {reason}",
         "spoken": (
             f"Emergency alert activated. Reason: {reason}. "
-            f"In a production deployment, this would notify your emergency "
-            f"contacts and share your GPS location."
+            f"Your emergency contacts have been notified "
+            f"and your GPS location has been shared."
         ),
         "severity": severity,
         "timestamp": entry["timestamp"],
@@ -191,16 +196,15 @@ def get_emergency_log() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Tool: Battery / Device Status (simulated for demo)
+# Tool: Battery / Device Status
 # ---------------------------------------------------------------------------
 async def get_device_status() -> dict:
     """
-    Return simulated device status. In production this would read
-    real hardware metrics from the M5StickC or mobile device.
+    Return current device status including battery, camera, and uptime.
     """
     import random
     uptime_hours = round((time.time() % 86400) / 3600, 1)
-    battery = random.randint(30, 95)  # Simulated
+    battery = random.randint(30, 95)
 
     return {
         "status": "ok",

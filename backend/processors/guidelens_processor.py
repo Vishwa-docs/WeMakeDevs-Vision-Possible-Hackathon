@@ -203,6 +203,7 @@ class GuideLensProcessor(VideoProcessorPublisher):
         self._total_inference_time = 0.0
         self._inference_count = 0
         self._start_time = time.time()
+        self._last_frame_width = 640  # default until first frame arrives
 
         self._load_model()
 
@@ -211,6 +212,18 @@ class GuideLensProcessor(VideoProcessorPublisher):
         try:
             from ultralytics import YOLO
 
+            # Auto-detect best available device for faster inference
+            actual_device = self.device
+            if self.device == "cpu":
+                try:
+                    import torch
+                    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                        actual_device = "mps"
+                        logger.info("Apple Metal (MPS) detected — using GPU acceleration")
+                except ImportError:
+                    pass
+
+            self.device = actual_device
             logger.info(
                 "Loading YOLO detection model: %s (device: %s)",
                 self.model_path,
@@ -305,6 +318,7 @@ class GuideLensProcessor(VideoProcessorPublisher):
             img = frame.to_ndarray(format="rgb24")
             h, w = img.shape[:2]
             frame_area = float(h * w)
+            self._last_frame_width = w
 
             if self._model is not None:
                 t_inference_start = time.time()
@@ -335,13 +349,14 @@ class GuideLensProcessor(VideoProcessorPublisher):
                         detections, w, frame_area, timestamp
                     )
 
-                    # --- Scene summary (periodic) ---
-                    if timestamp - self._last_summary_time > self.scene_summary_interval:
-                        await self._emit_scene_summary(detections, timestamp)
-                        self._last_summary_time = timestamp
-
                     # --- Log for spatial memory ---
                     self._log_detections(detections, timestamp)
+
+                # --- Scene summary (periodic) — fires even with NO detections
+                # so the agent always has something to say every 3 seconds ---
+                if self._events and timestamp - self._last_summary_time > self.scene_summary_interval:
+                    await self._emit_scene_summary(detections, timestamp)
+                    self._last_summary_time = timestamp
 
                 new_frame = av.VideoFrame.from_ndarray(
                     annotated_img, format="rgb24"
@@ -371,7 +386,7 @@ class GuideLensProcessor(VideoProcessorPublisher):
             results = self._model(
                 img,
                 conf=self.conf_threshold,
-                imgsz=320,  # Smaller input -> faster inference, lower latency
+                imgsz=256,   # Smaller input -> faster inference, lower latency
                 verbose=False,
                 device=self.device,
             )
@@ -570,13 +585,13 @@ class GuideLensProcessor(VideoProcessorPublisher):
     # ------------------------------------------------------------------
     @staticmethod
     def _estimate_direction(center_x: float, frame_width: int) -> str:
-        """Estimate object direction from horizontal bbox centre."""
+        """Estimate object direction from horizontal bbox center."""
         ratio = center_x / frame_width if frame_width > 0 else 0.5
         if ratio < 0.33:
             return "left"
         elif ratio > 0.66:
             return "right"
-        return "centre"
+        return "center"
 
     @staticmethod
     def _estimate_distance(area_ratio: float) -> str:
@@ -594,7 +609,13 @@ class GuideLensProcessor(VideoProcessorPublisher):
         """Store detections locally and sync to spatial memory."""
         enriched = []
         for d in detections:
-            direction = self._estimate_direction(d["center_x"], 1)
+            # Use the bbox center_x relative to the horizontal extent
+            # of the bounding box's image. We approximate frame_width from
+            # the detection's bbox (x2 gives us a lower-bound). A more
+            # precise value is passed from _process_frame.
+            direction = self._estimate_direction(
+                d["center_x"], self._last_frame_width
+            )
             distance = self._estimate_distance(d["area_ratio"])
             enriched.append({
                 "class": d["class"],
