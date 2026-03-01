@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+backend/.venv/
+backend/__pycache__/
+**/__pycache__/
+*.pyc
+
+# Environment files with secrets
+.env
+backend/.env
+frontend/.env
+
+# IDE / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Build artifacts
+frontend/dist/
+frontend/.next/
+
+# Test / dev files
+*.test.*
+**/__tests__/
+.pytest_cache/
+coverage/
+htmlcov/
+
+# Git
+.git/
+
+# Docs (not needed in container)
+Documentation/
+Plans/
+testing/
+
+# SQLite databases
+*.db
+*.db-shm
+*.db-wal
